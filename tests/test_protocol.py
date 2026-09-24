@@ -141,3 +141,39 @@ def test_http_token_origin_conflict_and_shared_mcp_state(tmp_path):
         server.server_close()
         thread.join(timeout=3)
         assert not thread.is_alive()
+
+
+def test_offline_workbench_assets_and_host_boundary(tmp_path):
+    service = Service(tmp_path / "static.nmrproj")
+    server, token = make_http(service)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    try:
+        for path, media, marker in [
+            ("/", "text/html", b'src="/view.js"'),
+            ("/view.js", "text/javascript", b"NMRView"),
+            ("/InterVariable.woff2", "font/woff2", b"wOF2"),
+        ]:
+            with urlopen(base + path, timeout=10) as response:
+                body = response.read()
+                assert response.headers.get_content_type() == media
+                assert marker in body
+                assert "default-src 'self'" in response.headers["Content-Security-Policy"]
+                assert response.headers["X-Content-Type-Options"] == "nosniff"
+                assert token.encode() not in body
+            with pytest.raises(HTTPError) as failure:
+                urlopen(Request(base + path, headers={"Host": "foreign.invalid"}), timeout=10)
+            assert failure.value.code == 403
+        # Adding a font and a geometry module must not expose arbitrary package files.
+        with pytest.raises(HTTPError) as failure:
+            urlopen(
+                Request(base + "/../service.py", headers={"Authorization": "Bearer " + token}),
+                timeout=10,
+            )
+        assert failure.value.code == 404
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+        assert not thread.is_alive()

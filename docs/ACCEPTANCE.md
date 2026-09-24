@@ -12,7 +12,7 @@ The private course mapping is maintained separately; private manuals are not sou
 | Protocol | Real Windows MCP subprocess initialize/catalog/calls/errors/resource bytes/EOF; JSON output contracts validated |
 | HTTP | Session/origin checks and actual shared-state edits through loopback HTTP |
 | Format | Qualified synthetic fixtures and explicit unsupported-format/unsafe-input rejection; see reader tests |
-| User workbench | Actual organic/T1 controls, MCP-versus-browser conflict, stale state, undo and saved-recipe reopen exercised; see DEVELOPMENT_RECEIPT.md |
+| User workbench | Actual organic/T1 controls, graphical zoom/pan/region selection, numeric-draft sync, responsive/keyboard checks, MCP-versus-browser conflict, stale state, undo and saved-recipe reopen; see DEVELOPMENT_RECEIPT.md and WORKBENCH_UI.md |
 | Native Mnova | Not used or accepted by this product; prior Mnova gates remain independent |
 | Installed hosts/models | Pending: ChatGPT Chat/Work, Codex, Claude, WorkBuddy and Terra max benchmark |
 | Packaging/cloud | Source build and CI definitions do not establish bundled installer, saved cloud environment or cloud-run success |

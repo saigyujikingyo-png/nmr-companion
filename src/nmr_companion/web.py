@@ -53,15 +53,17 @@ def make_http(service: Service, port=0):
 
         def do_GET(self):
             path = urlsplit(self.path).path
-            if path in {"/", "/app.js", "/app.css"}:
+            if path in {"/", "/app.js", "/view.js", "/app.css", "/InterVariable.woff2"}:
                 if self.headers.get("Host") != f"127.0.0.1:{self.server.server_port}":
                     self.send(403, {"error": "HOST_REJECTED"})
                     return
-                name = {"/": "index.html", "/app.js": "app.js", "/app.css": "app.css"}[path]
+                name = "index.html" if path == "/" else path[1:]
                 kind = {
                     "index.html": "text/html; charset=utf-8",
                     "app.js": "text/javascript; charset=utf-8",
                     "app.css": "text/css; charset=utf-8",
+                    "view.js": "text/javascript; charset=utf-8",
+                    "InterVariable.woff2": "font/woff2",
                 }[name]
                 self.send(200, (static / name).read_bytes(), kind)
                 return

@@ -21,6 +21,10 @@ model service is required. This independent project has no university or vendor 
   uncertain requests, undo, reopen, and export immutable revision bundles.
   Bundles contain an actual reopenable `project.nmrproj`, JSON, CSV, SVG and hashes.
 
+The three-pane workbench includes drag zoom, pan, signed spectrum display,
+and region selection for both organic integration and relaxation fits.
+See the [interaction guide and editable Figma design](docs/WORKBENCH_UI.md).
+
 ## Developer setup
 Use Python 3.12 and [uv](https://docs.astral.sh/uv/).
 ```sh
@@ -50,8 +54,11 @@ it does not create a project until instructed. Installed-host validation remains
 ```sh
 uv run ruff check .
 uv run pytest -q
+node --check src/nmr_companion/static/app.js
+node --test tests/frontend/view.test.cjs
 uv build
 ```
+Frontend checks require Node 22 or newer; Node is not a workbench runtime dependency.
 Tests use synthetic public fixtures and a real local MCP subprocess. The Windows
 cold-start test initializes scientific DLLs before the server reads requests.
 GitHub CI targets Windows and Linux; configured CI is not a passing run.

@@ -15,6 +15,14 @@ const token = sessionStorage.getItem("nmr-session") || "";
 let project = null,
   selected = null,
   busy = false;
+const views = new Map();
+let geometry = null,
+  gesture = null,
+  draft = null,
+  hoverAxis = null;
+let plotMode = "inspect",
+  workflow = "organic",
+  drawPending = false;
 const headers = {
   Authorization: "Bearer " + token,
   "Content-Type": "application/json",
@@ -90,6 +98,7 @@ async function act(fn) {
   } finally {
     busy = false;
     document.querySelectorAll("button").forEach((b) => (b.disabled = false));
+    syncPlotTools();
   }
 }
 async function edit(command) {
@@ -128,12 +137,7 @@ function render() {
   $("revision").textContent = project
     ? "Revision " + project.revision + " · saved locally"
     : "No project loaded";
-  $("spectrumCount").textContent = spectra.length + " spectra";
-  options(
-    $("spectrumSelect"),
-    spectra.map((s) => [s.id, s.name]),
-  );
-  $("spectrumSelect").value = selected || "";
+  renderLibrary();
   $("spectrumName").textContent = selected
     ? active().name
     : "A shared place to work with spectra.";
@@ -152,6 +156,14 @@ function render() {
       " · object version " +
       active().version
     : "Import data or load the synthetic demonstration.";
+  if (
+    draft &&
+    (draft.spectrumId !== selected || draft.version !== active().version)
+  ) {
+    resetIntegral();
+    $("draftStatus").textContent =
+      "Draft cleared because its source changed. Select the region again.";
+  }
   drawSpectrum();
   renderIntegrals();
   renderAnalyses();
@@ -178,118 +190,333 @@ function render() {
   options($("evidenceIds"), evidence);
   $("undoRevision").max = Math.max(0, (project?.revision || 1) - 1);
 }
+function renderLibrary() {
+  const spectra = Object.values(project?.spectra || {});
+  const query = $("spectrumSearch").value.trim().toLocaleLowerCase();
+  const shown = spectra.filter((s) =>
+    (s.name + " " + (s.nucleus || "")).toLocaleLowerCase().includes(query),
+  );
+  $("spectrumCount").textContent = spectra.length + " spectra";
+  options(
+    $("spectrumSelect"),
+    shown.map((s) => [s.id, s.name]),
+  );
+  $("spectrumSelect").value = selected || "";
+}
+function currentView() {
+  const s = project?.spectra[selected];
+  if (!s) return null;
+  let view = views.get(s.id);
+  if (!view || view.version !== s.version) {
+    const extent = NMRView.bounds(s.axis);
+    view = {
+      version: s.version,
+      extent,
+      range: [...extent],
+      history: [],
+      gain: 1,
+    };
+    views.set(s.id, view);
+    gesture = null;
+    hoverAxis = null;
+    $("cursorReadout").textContent = "Move over the spectrum";
+  }
+  return view;
+}
 function plot(
   canvas,
   x,
   y,
-  { unit = "ppm", title = "", regions = [], zero = true } = {},
+  {
+    unit = "ppm",
+    title = "",
+    regions = [],
+    zero = true,
+    range = null,
+    gain = 1,
+    crosshair = null,
+  } = {},
 ) {
   const rect = canvas.getBoundingClientRect(),
-    w = Math.max(300, rect.width),
-    h = rect.height || 300,
+    w = Math.max(100, rect.width),
+    h = rect.height || 280,
     dpr = devicePixelRatio || 1;
-  canvas.width = w * dpr;
-  canvas.height = h * dpr;
+  canvas.width = Math.round(w * dpr);
+  canvas.height = Math.round(h * dpr);
   const c = canvas.getContext("2d");
   c.scale(dpr, dpr);
   c.clearRect(0, 0, w, h);
   if (!x?.length) {
-    c.fillStyle = "#7c909b";
-    c.font = "14px Segoe UI";
-    c.fillText("Import a spectrum to begin.", 35, h / 2);
-    return;
+    c.fillStyle = "#7a899d";
+    c.font = "13px Inter, sans-serif";
+    c.fillText(
+      "Import local data or load the synthetic demonstration.",
+      28,
+      h / 2,
+    );
+    return null;
   }
-  let xmin = Infinity,
-    xmax = -Infinity,
-    ymin = zero ? 0 : Infinity,
-    ymax = zero ? 0 : -Infinity;
-  for (let i = 0; i < x.length; i++) {
-    xmin = Math.min(xmin, x[i]);
-    xmax = Math.max(xmax, x[i]);
-    ymin = Math.min(ymin, y[i]);
-    ymax = Math.max(ymax, y[i]);
-  }
+  const extent = NMRView.bounds(x);
+  let [xmin, xmax] = range || extent;
   if (xmin === xmax) xmax = xmin + 1;
+  let ymin = zero ? 0 : Infinity,
+    ymax = zero ? 0 : -Infinity;
+  for (const value of y) {
+    ymin = Math.min(ymin, value);
+    ymax = Math.max(ymax, value);
+  }
   const span = ymax - ymin || 1;
-  ymin -= span * 0.08;
-  ymax += span * 0.12;
+  ymin = (ymin - span * 0.08) / gain;
+  ymax = (ymax + span * 0.15) / gain;
   const left = 55,
     right = 24,
-    top = 20,
-    bottom = 42,
-    px = (v) =>
-      left +
-      ((unit === "ppm" ? xmax - v : v - xmin) / (xmax - xmin)) *
-        (w - left - right),
-    py = (v) => h - bottom - ((v - ymin) / (ymax - ymin)) * (h - top - bottom);
-  c.font = "11px Segoe UI";
+    top = 24,
+    bottom = 42;
+  const px = (v) =>
+    left +
+    ((unit === "ppm" ? xmax - v : v - xmin) / (xmax - xmin)) *
+      (w - left - right);
+  const py = (v) =>
+    h - bottom - ((v - ymin) / (ymax - ymin)) * (h - top - bottom);
+  c.font = "10px Inter, sans-serif";
   c.lineWidth = 1;
   c.textAlign = "center";
-  for (let j = 0; j <= 8; j++) {
-    const v = xmin + ((xmax - xmin) * j) / 8;
-    c.strokeStyle = "#ecf1f3";
+  const ticks = w < 500 ? 4 : 8;
+  for (let j = 0; j <= ticks; j++) {
+    const v = xmin + ((xmax - xmin) * j) / ticks;
+    c.strokeStyle = "#edf0f6";
     c.beginPath();
     c.moveTo(px(v), top);
     c.lineTo(px(v), h - bottom);
     c.stroke();
-    c.fillStyle = "#758995";
-    c.fillText(fmt(v, 4), px(v), h - bottom + 21);
+    c.fillStyle = "#6d7d94";
+    c.fillText(fmt(v, 5), px(v), h - bottom + 20);
   }
   for (let j = 0; j < 4; j++) {
     const v = ymin + ((ymax - ymin) * j) / 3;
     c.textAlign = "right";
-    c.fillStyle = "#91a1aa";
-    c.fillText(fmt(v, 3), left - 9, py(v) + 4);
+    c.fillStyle = "#99a5b5";
+    c.fillText(fmt(v, 3), left - 8, py(v) + 3);
   }
+  c.save();
+  c.beginPath();
+  c.rect(left, top, w - left - right, h - top - bottom);
+  c.clip();
   for (const r of regions) {
     const a = px(r.lower),
       b = px(r.upper);
-    c.fillStyle = "rgba(222,165,56,.15)";
+    c.fillStyle = r.draft ? "rgba(49,88,207,.10)" : "rgba(217,173,76,.10)";
     c.fillRect(Math.min(a, b), top, Math.abs(a - b), h - top - bottom);
-    c.fillStyle = "#a17423";
+    c.strokeStyle = r.draft ? "#6a87dd" : "#cfad63";
+    c.setLineDash(r.draft ? [4, 3] : []);
+    c.strokeRect(Math.min(a, b), top, Math.abs(a - b), h - top - bottom);
+    c.setLineDash([]);
+    c.fillStyle = r.draft ? "#3158cf" : "#9c7a36";
     c.textAlign = "center";
-    c.fillText(fmt(r.area, 4), (a + b) / 2, top + 13);
+    const labelX =
+      (Math.max(left, Math.min(a, b)) + Math.min(w - right, Math.max(a, b))) /
+      2;
+    if (Math.max(a, b) >= left && Math.min(a, b) <= w - right)
+      c.fillText(r.draft ? "Draft region" : fmt(r.area, 4), labelX, top + 14);
   }
-  c.strokeStyle = "#b5c7cc";
+  c.strokeStyle = "#c1ccdb";
   c.beginPath();
   c.moveTo(left, py(0));
   c.lineTo(w - right, py(0));
   c.stroke();
-  // Display-only min/max buckets retain narrow positive and negative features.
-  const indices = new Set([0, x.length - 1]),
-    step = Math.max(1, Math.ceil(x.length / (w * 1.5)));
-  for (let i = 0; i < x.length; i += step) {
-    let lo = i,
-      hi = i;
-    for (let j = i; j < Math.min(i + step, x.length); j++) {
-      if (y[j] < y[lo]) lo = j;
-      if (y[j] > y[hi]) hi = j;
-    }
-    indices.add(lo);
-    indices.add(hi);
-  }
-  c.strokeStyle = "#087d80";
-  c.lineWidth = 1.35;
+  c.strokeStyle = "#3158cf";
+  c.lineWidth = 1.25;
   c.beginPath();
-  let first = true;
-  for (const i of [...indices].sort((a, b) => a - b)) {
-    if (first) c.moveTo(px(x[i]), py(y[i]));
-    else c.lineTo(px(x[i]), py(y[i]));
-    first = false;
-  }
+  const visible = NMRView.indices(x, y, [xmin, xmax], w * 1.5);
+  visible.forEach((i, j) =>
+    j ? c.lineTo(px(x[i]), py(y[i])) : c.moveTo(px(x[i]), py(y[i])),
+  );
   c.stroke();
+  if (crosshair !== null && crosshair >= xmin && crosshair <= xmax) {
+    c.strokeStyle = "#8c9dbb";
+    c.lineWidth = 1;
+    c.setLineDash([3, 4]);
+    c.beginPath();
+    c.moveTo(px(crosshair), top);
+    c.lineTo(px(crosshair), h - bottom);
+    c.stroke();
+    c.setLineDash([]);
+  }
+  c.restore();
   c.textAlign = "center";
-  c.fillStyle = "#506e7b";
+  c.fillStyle = "#697d9a";
   c.fillText(title || unit, w / 2, h - 7);
+  return { left, right, top, bottom, width: w, height: h, range: [xmin, xmax] };
 }
 function drawSpectrum() {
-  const s = project?.spectra[selected];
-  plot($("spectrumPlot"), s?.axis, s?.real, {
+  const s = project?.spectra[selected],
+    view = currentView();
+  const regions = Object.values(project?.integrals || {}).filter(
+    (i) => i.spectrum_id === selected,
+  );
+  if (draft && draft.spectrumId === selected && draftIsVisible())
+    regions.push({ ...draft, draft: true });
+  if (gesture && gesture.mode !== "pan" && gesture.end !== null)
+    regions.push({
+      lower: Math.min(gesture.start, gesture.end),
+      upper: Math.max(gesture.start, gesture.end),
+      draft: true,
+    });
+  geometry = plot($("spectrumPlot"), s?.axis, s?.real, {
     unit: s?.axis_unit || "ppm",
-    regions: Object.values(project?.integrals || {}).filter(
-      (i) => i.spectrum_id === selected,
-    ),
+    regions,
+    range: view?.range,
+    gain: view?.gain || 1,
+    crosshair: hoverAxis,
   });
+  if (view) {
+    $("axisUnit").textContent = s.axis_unit;
+    if (!["viewLower", "viewUpper"].includes(document.activeElement?.id)) {
+      $("viewLower").value = Number(view.range[0].toPrecision(9));
+      $("viewUpper").value = Number(view.range[1].toPrecision(9));
+    }
+    $("viewReadout").textContent =
+      fmt(view.range[1], 5) +
+      " → " +
+      fmt(view.range[0], 5) +
+      " " +
+      s.axis_unit +
+      " · " +
+      fmt(view.gain, 3) +
+      "× display";
+    if (s.axis_unit !== "ppm")
+      $("viewReadout").textContent =
+        fmt(view.range[0], 5) +
+        " → " +
+        fmt(view.range[1], 5) +
+        " " +
+        s.axis_unit +
+        " · " +
+        fmt(view.gain, 3) +
+        "× display";
+  }
+  syncPlotTools();
+}
+function scheduleDraw() {
+  if (drawPending) return;
+  drawPending = true;
+  requestAnimationFrame(() => {
+    drawPending = false;
+    drawSpectrum();
+  });
+}
+function syncPlotTools() {
+  const view = currentView(),
+    spectrum = project?.spectra[selected];
+  document.querySelectorAll("[data-plot-mode]").forEach((b) => {
+    b.setAttribute("aria-pressed", String(b.dataset.plotMode === plotMode));
+    b.disabled =
+      busy ||
+      !spectrum ||
+      (b.dataset.plotMode === "integrate" && spectrum.axis_unit !== "ppm");
+  });
+  $("zoomBack").disabled = busy || !view?.history.length;
+  for (const id of ["fitView", "gainUp", "gainDown"])
+    $(id).disabled = busy || !view;
+}
+function changeView(next, remember = true) {
+  const view = currentView();
+  if (!view || !next) return;
+  if (remember && next.some((v, i) => v !== view.range[i])) {
+    view.history.push([...view.range]);
+    if (view.history.length > 24) view.history.shift();
+  }
+  view.range = [...next];
+  hoverAxis = null;
+  drawSpectrum();
+}
+function cancelGesture() {
+  if (gesture?.mode === "pan") currentView().range = [...gesture.original];
+  gesture = null;
+  $("spectrumPlot").dataset.dragging = "false";
+  scheduleDraw();
+}
+function setPlotMode(mode) {
+  if (busy) return;
+  if (mode === "integrate" && project?.spectra[selected]?.axis_unit !== "ppm")
+    return;
+  cancelGesture();
+  plotMode = mode;
+  $("spectrumPlot").dataset.mode = mode;
+  const regionTarget =
+    workflow === "relaxation"
+      ? "the shared relaxation region"
+      : "a new integral";
+  $("plotHelp").textContent = {
+    inspect:
+      "Move over the spectrum to read coordinates. Z: zoom · H: pan · I: region · F: full view.",
+    zoom: "Drag across the region to magnify. Back restores the previous view. F shows the full spectrum.",
+    pan: "Drag to move the visible range. Display changes never modify the data.",
+    integrate:
+      "Drag to select " +
+      regionTarget +
+      ". Review the bounds in the inspector, then save or fit. Esc cancels a drag.",
+  }[mode];
+  syncPlotTools();
+}
+function switchWorkflow(name) {
+  workflow = name;
+  document.querySelectorAll("[data-tab]").forEach((b) => {
+    const current = b.dataset.tab === name;
+    b.classList.toggle("active", current);
+    b.setAttribute("aria-selected", String(current));
+    b.tabIndex = current ? 0 : -1;
+  });
+  document
+    .querySelectorAll(".panel")
+    .forEach((p) => (p.hidden = p.id !== name));
+  $("inspectorTitle").textContent = {
+    organic: "Organic analysis",
+    relaxation: "T₁ / T₂ relaxation",
+    processing: "Spectrum processing",
+    evidence: "Evidence & assignments",
+    advanced: "Advanced operations",
+  }[name];
+  $("regionToolLabel").textContent =
+    name === "relaxation" ? "Fit region" : "Integrate";
+  setPlotMode(plotMode);
+  syncDraftStatus();
+  scheduleDraw();
+}
+function eventAxis(e, limits = currentView()?.range) {
+  if (!geometry || !limits) return null;
+  const rect = $("spectrumPlot").getBoundingClientRect();
+  return NMRView.at(
+    (e.clientX - rect.left - geometry.left) /
+      (geometry.width - geometry.left - geometry.right),
+    limits,
+    active().axis_unit === "ppm",
+  );
+}
+function draftIsVisible() {
+  return (
+    draft &&
+    (draft.kind === "fit" ? workflow === "relaxation" : workflow === "organic")
+  );
+}
+function syncDraftStatus() {
+  $("draftStatus").textContent = draftIsVisible()
+    ? draft.kind === "fit"
+      ? "Shared fit region selected · review the trace mappings before fitting."
+      : "Unsaved integral region · review bounds, then Save integral"
+    : "Saved results retain their evidence and revision.";
+}
+function draftFromFields(kind = "integral") {
+  const s = project?.spectra[selected];
+  if (!s) return;
+  const lower = $(kind === "fit" ? "fitLower" : "lower").valueAsNumber,
+    upper = $(kind === "fit" ? "fitUpper" : "upper").valueAsNumber;
+  draft =
+    Number.isFinite(lower) && Number.isFinite(upper) && lower < upper
+      ? { spectrumId: s.id, version: s.version, kind, lower, upper }
+      : null;
+  syncDraftStatus();
+  scheduleDraw();
 }
 function renderIntegrals() {
   const out = $("integralList");
@@ -314,6 +541,8 @@ function renderIntegrals() {
       $("lower").value = i.lower;
       $("upper").value = i.upper;
       $("saveIntegral").textContent = "Update integral";
+      switchWorkflow("organic");
+      draftFromFields();
     };
     remove.onclick = () => act(() => edit({ op: "remove", object_id: i.id }));
     actions.append(editButton, remove);
@@ -324,6 +553,12 @@ function renderIntegrals() {
 function resetIntegral() {
   $("integralId").value = "";
   $("saveIntegral").textContent = "Save integral";
+  $("lower").value = "";
+  $("upper").value = "";
+  draft = null;
+  $("draftStatus").textContent =
+    "Saved results retain their evidence and revision.";
+  scheduleDraw();
 }
 function table(headers, rows) {
   const t = node("table"),
@@ -572,19 +807,204 @@ function form(id, fn) {
     act(fn);
   });
 }
-document.querySelectorAll("[data-tab]").forEach(
-  (button) =>
-    (button.onclick = () => {
-      document
-        .querySelectorAll("[data-tab]")
-        .forEach((b) => b.classList.toggle("active", b === button));
-      document
-        .querySelectorAll(".panel")
-        .forEach((p) => (p.hidden = p.id !== button.dataset.tab));
-    }),
-);
+document.querySelectorAll("[data-tab]").forEach((button) => {
+  button.onclick = () => switchWorkflow(button.dataset.tab);
+  button.onkeydown = (e) => {
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+    e.preventDefault();
+    const tabs = [...document.querySelectorAll("[data-tab]")],
+      index = tabs.indexOf(button);
+    const next =
+      e.key === "Home"
+        ? 0
+        : e.key === "End"
+          ? tabs.length - 1
+          : (index + (e.key === "ArrowRight" ? 1 : -1) + tabs.length) %
+            tabs.length;
+    tabs[next].focus();
+    switchWorkflow(tabs[next].dataset.tab);
+  };
+});
+document
+  .querySelectorAll("[data-plot-mode]")
+  .forEach((b) => (b.onclick = () => setPlotMode(b.dataset.plotMode)));
+$("spectrumSearch").oninput = renderLibrary;
+$("lower").oninput = $("upper").oninput = () => draftFromFields();
+$("fitLower").oninput = $("fitUpper").oninput = () => draftFromFields("fit");
+$("fitView").onclick = () => {
+  const v = currentView();
+  if (v) {
+    v.gain = 1;
+    changeView(v.extent);
+  }
+};
+$("zoomBack").onclick = () => {
+  const v = currentView();
+  if (v?.history.length) changeView(v.history.pop(), false);
+};
+for (const [id, multiplier] of [
+  ["gainUp", 1.5],
+  ["gainDown", 1 / 1.5],
+])
+  $(id).onclick = () => {
+    const v = currentView();
+    if (v) {
+      v.gain = Math.max(0.1, Math.min(30, v.gain * multiplier));
+      drawSpectrum();
+    }
+  };
+form("viewForm", () => {
+  const v = currentView();
+  if (!v) throw Error("Select a spectrum.");
+  const limits = NMRView.range(
+    value("viewLower"),
+    value("viewUpper"),
+    v.extent,
+  );
+  if (!limits) throw Error("Enter two distinct bounds within the spectrum.");
+  changeView(limits);
+});
+const spectrumCanvas = $("spectrumPlot");
+spectrumCanvas.addEventListener("pointerdown", (e) => {
+  if (busy || !geometry || e.button !== 0 || gesture) return;
+  const rect = spectrumCanvas.getBoundingClientRect(),
+    x = e.clientX - rect.left,
+    y = e.clientY - rect.top;
+  if (
+    x < geometry.left ||
+    x > geometry.width - geometry.right ||
+    y < geometry.top ||
+    y > geometry.height - geometry.bottom
+  )
+    return;
+  spectrumCanvas.focus();
+  if (plotMode === "inspect") return;
+  e.preventDefault();
+  gesture = {
+    pointerId: e.pointerId,
+    mode: plotMode,
+    spectrumId: selected,
+    version: active().version,
+    start: eventAxis(e),
+    end: null,
+    startPixel: e.clientX,
+    original: [...currentView().range],
+  };
+  spectrumCanvas.setPointerCapture(e.pointerId);
+  spectrumCanvas.dataset.dragging = "true";
+});
+spectrumCanvas.addEventListener("pointermove", (e) => {
+  if (!geometry || !selected) return;
+  hoverAxis = eventAxis(e);
+  $("cursorReadout").textContent =
+    (active().axis_unit === "ppm" ? "δ " : "Time ") +
+    fmt(hoverAxis, 7) +
+    " " +
+    active().axis_unit;
+  if (gesture?.pointerId === e.pointerId) {
+    if (
+      gesture.spectrumId !== selected ||
+      gesture.version !== active().version
+    ) {
+      cancelGesture();
+      return;
+    }
+    gesture.end = eventAxis(e, gesture.original);
+    if (gesture.mode === "pan")
+      currentView().range = NMRView.pan(
+        gesture.original,
+        gesture.start - gesture.end,
+        currentView().extent,
+      );
+  }
+  scheduleDraw();
+});
+spectrumCanvas.addEventListener("pointerup", (e) => {
+  if (!gesture || gesture.pointerId !== e.pointerId) return;
+  const g = gesture;
+  gesture = null;
+  spectrumCanvas.dataset.dragging = "false";
+  if (spectrumCanvas.hasPointerCapture(e.pointerId))
+    spectrumCanvas.releasePointerCapture(e.pointerId);
+  if (g.spectrumId !== selected || g.version !== active().version) {
+    drawSpectrum();
+    return;
+  }
+  if (g.mode === "pan") {
+    if (currentView().range.some((v, i) => v !== g.original[i])) {
+      currentView().history.push(g.original);
+      if (currentView().history.length > 24) currentView().history.shift();
+    }
+  } else if (Math.abs(e.clientX - g.startPixel) >= 4) {
+    const limits = NMRView.range(
+      g.start,
+      eventAxis(e, g.original),
+      currentView().extent,
+    );
+    if (limits && g.mode === "zoom") changeView(limits);
+    else if (limits && g.mode === "integrate") {
+      if (workflow === "relaxation") {
+        $("fitLower").value = Number(limits[0].toPrecision(9));
+        $("fitUpper").value = Number(limits[1].toPrecision(9));
+        draft = {
+          spectrumId: selected,
+          version: active().version,
+          kind: "fit",
+          lower: limits[0],
+          upper: limits[1],
+        };
+        $("draftStatus").textContent =
+          "Shared fit region selected · review the trace mappings before fitting.";
+        notice("Shared relaxation bounds selected. No fit has been run.");
+      } else {
+        switchWorkflow("organic");
+        resetIntegral();
+        $("lower").value = Number(limits[0].toPrecision(9));
+        $("upper").value = Number(limits[1].toPrecision(9));
+        draftFromFields();
+        notice(
+          "Integral region selected. Review its name and bounds, then Save integral.",
+        );
+      }
+    }
+  }
+  drawSpectrum();
+});
+spectrumCanvas.addEventListener("pointercancel", cancelGesture);
+spectrumCanvas.addEventListener("lostpointercapture", () => {
+  if (gesture) cancelGesture();
+});
+spectrumCanvas.addEventListener("pointerleave", () => {
+  if (!gesture) {
+    hoverAxis = null;
+    scheduleDraw();
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if (
+    e.ctrlKey ||
+    e.metaKey ||
+    e.altKey ||
+    busy ||
+    e.target.closest("input,select,textarea,[contenteditable=true]")
+  )
+    return;
+  const key = e.key.toLowerCase();
+  const modes = { v: "inspect", z: "zoom", h: "pan", i: "integrate" };
+  if (modes[key]) {
+    e.preventDefault();
+    setPlotMode(modes[key]);
+  } else if (key === "f") {
+    e.preventDefault();
+    $("fitView").click();
+  } else if (key === "escape") {
+    cancelGesture();
+    setPlotMode("inspect");
+  }
+});
 $("refresh").onclick = () => act(refresh);
 $("spectrumSelect").onchange = () => {
+  cancelGesture();
   selected = $("spectrumSelect").value;
   resetIntegral();
   render();
@@ -619,16 +1039,22 @@ $("demo").onclick = () =>
       )
       .forEach((s, i) => addMapping(s.id, i));
   });
-form("integralForm", () =>
-  edit({
+form("integralForm", async () => {
+  if (
+    draft &&
+    (draft.spectrumId !== active().id || draft.version !== active().version)
+  )
+    throw Error("The draft source changed. Select the region again.");
+  await edit({
     op: "integrate",
     spectrum_id: active().id,
     name: $("integralName").value,
     lower: value("lower"),
     upper: value("upper"),
     integral_id: $("integralId").value || null,
-  }),
-);
+  });
+  resetIntegral();
+});
 form("yieldForm", () =>
   edit({
     op: "yield",
@@ -641,9 +1067,9 @@ form("yieldForm", () =>
     stoichiometric_factor: value("stoichiometry"),
   }),
 );
-form("fitForm", () => {
+form("fitForm", async () => {
   const rows = [...document.querySelectorAll(".mapping-row")];
-  return edit({
+  await edit({
     op: "fit",
     spectrum_ids: rows.map((r) => r.querySelector(".map-spectrum").value),
     table_id: $("delayTable").value,
@@ -664,6 +1090,11 @@ form("fitForm", () => {
     ),
     purpose: $("purpose").value,
   });
+  if (draft?.kind === "fit") {
+    draft = null;
+    syncDraftStatus();
+    scheduleDraw();
+  }
 });
 form("processForm", () =>
   edit({
@@ -739,8 +1170,12 @@ $("export").onclick = () =>
         );
       });
     out.append(button);
+    out.scrollIntoView({ block: "nearest", behavior: "smooth" });
   });
-window.addEventListener("resize", drawSpectrum);
+window.addEventListener("resize", scheduleDraw);
+new ResizeObserver(scheduleDraw).observe($("spectrumPlot"));
+document.fonts.ready.then(scheduleDraw);
+switchWorkflow("organic");
 act(async () => {
   if (!token)
     throw Error(
