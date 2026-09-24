@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "nmr-companion": {
+      "command": "nmr-companion",
+      "args": [
+        "mcp"
+      ]
+    }
+  }
+}

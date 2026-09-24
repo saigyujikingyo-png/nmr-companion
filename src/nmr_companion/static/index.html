@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>NMR Companion · Workbench</title>
+    <link rel="stylesheet" href="/app.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="/"
+        ><b>N</b
+        ><span>NMR Companion<small>LOCAL SCIENTIFIC WORKBENCH</small></span></a
+      >
+      <div class="project-heading">
+        <strong id="projectName">Open a project</strong
+        ><span id="revision">No project loaded</span>
+      </div>
+      <div class="header-actions">
+        <span class="badge">DEVELOPER ALPHA</span
+        ><button id="refresh">Refresh</button
+        ><button id="export" class="primary">Export revision</button>
+      </div>
+    </header>
+    <div id="notice" role="status" aria-live="polite">
+      Connecting to the local project…
+    </div>
+    <main>
+      <aside class="sidebar">
+        <div class="section-label">
+          PROJECT LIBRARY <span id="spectrumCount">0 spectra</span>
+        </div>
+        <label for="spectrumSelect">Active spectrum</label
+        ><select
+          id="spectrumSelect"
+          size="9"
+          aria-label="Active spectrum"
+        ></select>
+        <div id="sourceInfo" class="muted">
+          Import data or load the synthetic demonstration.
+        </div>
+        <details open>
+          <summary>Import local data</summary>
+          <form id="importForm">
+            <label for="importPath">File or folder path</label
+            ><input
+              id="importPath"
+              required
+              placeholder="Absolute local path"
+            /><button type="submit">Import &amp; preserve originals</button>
+          </form>
+          <p class="hint">
+            Qualified 1D Bruker, numeric single-block DX, CSV or ZIP. Data stays
+            on this machine.
+          </p>
+        </details>
+        <details>
+          <summary>Project controls</summary>
+          <form id="createForm">
+            <label for="newName">New project name</label
+            ><input id="newName" value="NMR project" required /><button>
+              Create empty project
+            </button>
+          </form>
+          <button id="demo">Load synthetic demonstration</button>
+          <p class="hint">
+            Demo values are software examples, never experimental results.
+          </p>
+          <form id="undoForm">
+            <label for="undoRevision">Restore revision as a new revision</label
+            ><input
+              id="undoRevision"
+              type="number"
+              min="0"
+              step="1"
+              required
+            /><button>Restore revision</button>
+          </form>
+        </details>
+        <div class="sidebar-foot">
+          One project. Human + agent edits.<br />Every change carries its
+          observed revision.
+        </div>
+      </aside>
+      <section class="workspace">
+        <section class="plot-card">
+          <div class="plot-heading">
+            <div>
+              <p class="eyebrow">SPECTRUM</p>
+              <h1 id="spectrumName">A shared place to work with spectra.</h1>
+            </div>
+            <span id="domainBadge" class="pill">No spectrum</span>
+          </div>
+          <canvas
+            id="spectrumPlot"
+            width="1100"
+            height="360"
+            aria-label="Active spectrum plot with signed intensities"
+          ></canvas>
+          <div class="plot-footer">
+            <span id="plotNote"
+              >Full-resolution arrays are used for every calculation.</span
+            ><span id="pointCount"></span>
+          </div>
+        </section>
+        <nav class="tabs" aria-label="Analysis tools">
+          <button data-tab="organic" class="active">Organic analysis</button
+          ><button data-tab="relaxation">T₁ / T₂</button
+          ><button data-tab="processing">Processing</button
+          ><button data-tab="evidence">Evidence</button
+          ><button data-tab="advanced">Advanced</button>
+        </nav>
+        <section id="organic" class="panel">
+          <div class="two-col">
+            <article>
+              <p class="eyebrow">01 / INTEGRATE</p>
+              <h2>Define a signal region</h2>
+              <form id="integralForm">
+                <input id="integralId" type="hidden" /><label for="integralName"
+                  >Region name</label
+                ><input id="integralName" value="Product" required />
+                <div class="two-col">
+                  <label
+                    >Lower bound · ppm<input
+                      id="lower"
+                      type="number"
+                      step="any"
+                      required /></label
+                  ><label
+                    >Upper bound · ppm<input
+                      id="upper"
+                      type="number"
+                      step="any"
+                      required
+                  /></label>
+                </div>
+                <div class="actions">
+                  <button class="primary" id="saveIntegral">
+                    Save integral</button
+                  ><button type="button" id="newIntegral">New region</button>
+                </div>
+              </form>
+              <div id="integralList"></div>
+            </article>
+            <article>
+              <p class="eyebrow">02 / QUANTIFY</p>
+              <h2>Internal-standard yield</h2>
+              <form id="yieldForm">
+                <label
+                  >Product integral<select
+                    id="productIntegral"
+                    required
+                  ></select></label
+                ><label
+                  >Standard integral<select
+                    id="standardIntegral"
+                    required
+                  ></select
+                ></label>
+                <div class="two-col">
+                  <label
+                    >Product proton count<input
+                      id="productProtons"
+                      type="number"
+                      min="0"
+                      step="any"
+                      required /></label
+                  ><label
+                    >Standard proton count<input
+                      id="standardProtons"
+                      type="number"
+                      min="0"
+                      step="any"
+                      required /></label
+                  ><label
+                    >Standard amount · mol<input
+                      id="standardMol"
+                      type="number"
+                      min="0"
+                      step="any"
+                      required /></label
+                  ><label
+                    >Limiting amount · mol<input
+                      id="limitingMol"
+                      type="number"
+                      min="0"
+                      step="any"
+                      required
+                  /></label>
+                </div>
+                <label
+                  >Product mol per limiting mol<input
+                    id="stoichiometry"
+                    type="number"
+                    min="0"
+                    step="any"
+                    value="1"
+                    required /></label
+                ><button class="primary">Calculate yield</button>
+              </form>
+              <p class="hint">
+                Use separated quantitative regions in one spectrum. Acquisition,
+                purity and preparation assumptions are recorded with the result.
+              </p>
+            </article>
+          </div>
+        </section>
+        <section id="relaxation" class="panel" hidden>
+          <div class="panel-title">
+            <div>
+              <p class="eyebrow">RELAXATION</p>
+              <h2>Connect each trace to its delay</h2>
+            </div>
+            <span class="pill">Signed areas · no trace normalization</span>
+          </div>
+          <form id="fitForm">
+            <div class="three-col">
+              <label
+                >Delay table<select id="delayTable" required></select></label
+              ><label
+                >Delay column<select id="delayColumn" required></select></label
+              ><label
+                >Stored time unit<select id="timeUnit">
+                  <option value="">Choose explicitly</option>
+                  <option value="ms">ms</option>
+                  <option value="s">s</option>
+                  <option value="us">µs</option>
+                </select></label
+              >
+            </div>
+            <label
+              >Area standard uncertainty column · optional<select
+                id="sigmaColumn"
+              >
+                <option value="">Unweighted</option>
+              </select></label
+            >
+            <div id="tablePreview" class="table-wrap"></div>
+            <div class="mapping-heading">
+              <h3>Explicit trace / row mapping</h3>
+              <button type="button" id="addMapping">Add mapped trace</button>
+            </div>
+            <p class="hint">
+              CSV row indices start at 0. Replicate delays remain separate
+              measurements. Review each pairing.
+            </p>
+            <div id="mappings"></div>
+            <div class="three-col">
+              <label
+                >Model<select id="fitModel">
+                  <option value="T1">T₁ inversion recovery</option>
+                  <option value="T2">T₂ decay with offset</option>
+                </select></label
+              ><label
+                >Time basis<select id="timeBasis">
+                  <option value="elapsed">Elapsed relaxation time</option>
+                  <option value="echo_interval">
+                    Echo interval · explicit multiplier
+                  </option>
+                </select></label
+              ><label
+                >Echo multiplier<input
+                  id="delayMultiplier"
+                  type="number"
+                  min="0"
+                  step="any"
+                  placeholder="Required for echo interval" /></label
+              ><label
+                >Shared lower bound · ppm<input
+                  id="fitLower"
+                  type="number"
+                  step="any"
+                  required /></label
+              ><label
+                >Shared upper bound · ppm<input
+                  id="fitUpper"
+                  type="number"
+                  step="any"
+                  required /></label
+              ><label
+                >Acquisition purpose<select id="purpose">
+                  <option value="analysis">Analysis</option>
+                  <option value="quick_check">Preliminary quick check</option>
+                </select></label
+              >
+            </div>
+            <button class="primary">Integrate &amp; fit mapped traces</button>
+          </form>
+        </section>
+        <section id="processing" class="panel" hidden>
+          <div class="panel-title">
+            <div>
+              <p class="eyebrow">PROCESSING</p>
+              <h2>Explicit, reversible operations</h2>
+            </div>
+          </div>
+          <form id="processForm">
+            <div class="three-col">
+              <label
+                >Operation<select id="processMethod">
+                  <option value="phase">Complex phase correction</option>
+                  <option value="baseline">Affine baseline from windows</option>
+                  <option value="reference">Shift reference</option>
+                  <option value="fft">Window &amp; FFT raw FID</option>
+                </select></label
+              ><label
+                >PH0 · degrees<input
+                  id="ph0"
+                  type="number"
+                  step="any"
+                  value="0" /></label
+              ><label
+                >PH1 · degrees<input
+                  id="ph1"
+                  type="number"
+                  step="any"
+                  value="0" /></label
+              ><label
+                >Phase pivot · ppm<input
+                  id="pivot"
+                  type="number"
+                  step="any"
+                  value="0" /></label
+              ><label
+                >Reference shift · ppm<input
+                  id="referenceShift"
+                  type="number"
+                  step="any"
+                  value="0" /></label
+              ><label
+                >Line broadening · Hz<input
+                  id="lb"
+                  type="number"
+                  min="0"
+                  step="any"
+                  value="0.3" /></label
+              ><label
+                >Zero-fill factor<select id="zeroFill">
+                  <option>2</option>
+                  <option>1</option>
+                  <option>4</option>
+                </select></label
+              >
+            </div>
+            <label
+              >Baseline windows · JSON pairs in ppm<input
+                id="baselineRegions"
+                value="[[0,1],[9,10]]" /></label
+            ><button class="primary">Apply to active spectrum</button>
+          </form>
+          <p class="hint">
+            Phase correction needs imaginary data. FFT is limited to raw complex
+            FIDs. Source edits recalculate affected areas and mark analyses and
+            assignments stale.
+          </p>
+          <form id="peakForm" class="compact-form">
+            <label
+              >Peak prominence · intensity<input
+                id="prominence"
+                type="number"
+                min="0"
+                step="any"
+                required /></label
+            ><button>Find signed peak candidates</button>
+          </form>
+        </section>
+        <section id="evidence" class="panel" hidden>
+          <p class="eyebrow">EVIDENCE</p>
+          <h2>Keep interpretation tied to observations</h2>
+          <form id="assignmentForm">
+            <input id="assignmentId" type="hidden" />
+            <div class="three-col">
+              <label>Sample<input id="sample" required /></label
+              ><label>Atom / assignment label<input id="atom" required /></label
+              ><label
+                >Candidate structure label<input id="candidate" required
+              /></label>
+            </div>
+            <label
+              >Observation and reasoning<textarea
+                id="observation"
+                rows="3"
+                required
+              ></textarea></label
+            ><label
+              >Evidence objects · select one or more<select
+                id="evidenceIds"
+                multiple
+                size="5"
+                required
+              ></select></label
+            ><label
+              >Review state<select id="assignmentStatus">
+                <option value="proposed">Proposed</option>
+                <option value="confirmed">Confirmed by reviewer</option>
+              </select></label
+            ><button class="primary">Save assignment</button>
+          </form>
+          <div id="assignmentList"></div>
+        </section>
+        <section id="advanced" class="panel" hidden>
+          <h2>Validated operation editor</h2>
+          <p class="hint">
+            This uses the same schemas, revision check and scientific service as
+            normal controls and MCP.
+          </p>
+          <label
+            >Discover an operation<select id="helpOperation"></select></label
+          ><button id="loadHelp">Show input schema</button>
+          <pre id="helpSchema"></pre>
+          <form id="advancedForm">
+            <label
+              >Operation JSON<textarea id="commandJson" rows="8">
+{"op":"demo"}</textarea
+              ></label
+            ><button class="primary">Apply operation</button>
+          </form>
+          <details>
+            <summary>Last request receipt</summary>
+            <pre id="receipt"></pre>
+          </details>
+        </section>
+        <section class="results">
+          <div class="panel-title">
+            <div>
+              <p class="eyebrow">PROJECT RESULTS</p>
+              <h2>Computed values &amp; their evidence</h2>
+            </div>
+            <span id="resultCount" class="pill">0 analyses</span>
+          </div>
+          <div id="analyses">
+            <p class="muted">
+              Results will appear here with methods, assumptions and revision
+              status.
+            </p>
+          </div>
+        </section>
+        <div id="artifact" class="artifact"></div>
+        <footer>
+          Independent developer software · Python numerical core · Local project
+          storage · Experimental acceptance remains separate
+        </footer>
+      </section>
+    </main>
+  </body>
+</html>

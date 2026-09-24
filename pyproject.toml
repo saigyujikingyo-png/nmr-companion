@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "nmr-companion"
+version = "0.1.0a1"
+description = "An editable, local NMR workbench with a shared numerical core for agents."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = "MIT"
+dependencies = [
+  "numpy>=2.2,<3", "scipy>=1.15,<2", "nmrglue==0.12",
+  "pydantic>=2.11,<3", "mcp>=1.20,<2"
+]
+[project.scripts]
+nmr-companion = "nmr_companion.cli:main"
+[dependency-groups]
+dev = ["pytest>=8.3,<10", "ruff>=0.12,<1", "jsonschema>=4.23,<5"]
+[tool.hatch.build.targets.wheel]
+packages = ["src/nmr_companion"]
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

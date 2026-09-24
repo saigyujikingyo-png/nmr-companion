@@ -1,0 +1,22 @@
+{
+  "name": "nmr-companion",
+  "version": "0.1.0-alpha.1",
+  "description": "Developer preview of an editable local NMR core for organic and relaxation workflows.",
+  "author": {
+    "name": "NMR Companion contributors"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/saigyujikingyo-png/nmr-companion",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "NMR Companion",
+    "shortDescription": "Shared NMR projects for people and agents.",
+    "longDescription": "Developer alpha: qualified 1D imports, signed integration, internal-standard yield, T1/T2 analysis, revision history and local exports. Installed-host and full laboratory acceptance are pending.",
+    "developerName": "NMR Companion contributors",
+    "category": "Productivity",
+    "brandColor": "#147D83",
+    "capabilities": [],
+    "defaultPrompt": "Help me analyse NMR data with explicit units, provenance and editable results."
+  }
+}
