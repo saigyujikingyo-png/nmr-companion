@@ -1,0 +1,4 @@
+# Preserve the original bytes used by the public upstream notice hash inventory.
+resources/THIRD-PARTY-NATIVE-NOTICES/licenses/** -text
+resources/THIRD-PARTY-NATIVE-NOTICES/attributions/** -text
+resources/THIRD-PARTY-NATIVE-NOTICES/auxiliary/** -text

@@ -11,6 +11,9 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+      - name: Linux Qt headless prerequisites
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libopengl0 fonts-dejavu-core
       - run: uv sync --locked --group dev --python 3.12
       - uses: actions/setup-node@v4
         with:
@@ -20,4 +23,5 @@ jobs:
       - run: node --test tests/frontend/*.test.cjs
       - run: uv run ruff check .
       - run: uv run pytest
+      - run: uv run nmr-companion desktop-check
       - run: uv build

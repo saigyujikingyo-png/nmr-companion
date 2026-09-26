@@ -10,18 +10,24 @@ param(
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-$EntryPoints = @('Launch.ps1', 'nmr-mcp.cmd', 'NMR Companion.cmd', 'Rollback.cmd',
+$LegacyEntryPoints = @('Launch.ps1', 'nmr-mcp.cmd', 'NMR Companion.cmd', 'Rollback.cmd',
     'Verify.cmd', 'Uninstall.cmd', 'Recover.cmd', 'Manage-Installation.ps1')
+$EntryPoints = @($LegacyEntryPoints) + @('NMR Companion.exe')
+$MaintenanceEntryPoints = @('Manage-Installation.ps1', 'NMR Companion.exe', 'NMR Companion.cmd')
 $Utf8 = New-Object System.Text.UTF8Encoding($false)
 
 function Assert-NoReparse([string]$Path) {
     $cursor = [IO.Path]::GetFullPath($Path)
     while ($cursor) {
-        if (Test-Path -LiteralPath $cursor) {
-            $item = Get-Item -LiteralPath $cursor -Force
-            if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-                throw "Reparse points are not supported in package paths: $cursor"
-            }
+        # Native attributes avoid repeated PowerShell provider traversal for every
+        # ancestor of thousands of Qt files. Missing planned paths are allowed;
+        # access failures and existing reparse points still stop the operation.
+        $attributes = $null
+        try { $attributes = [IO.File]::GetAttributes($cursor) }
+        catch [IO.FileNotFoundException] { }
+        catch [IO.DirectoryNotFoundException] { }
+        if ($null -ne $attributes -and $attributes -band [IO.FileAttributes]::ReparsePoint) {
+            throw "Reparse points are not supported in package paths: $cursor"
         }
         $parent = [IO.Path]::GetDirectoryName($cursor)
         if ($parent -eq $cursor) { break }
@@ -119,6 +125,11 @@ function Get-AdapterFiles([string]$Directory, $Manifest) {
         args = @('-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
             (Join-Path $Root 'Launch.ps1'), '-Mode', 'mcp')
     } } }
+    # Keep alpha.1's original adapter format when its runtime is selected.
+    # Derive this from the target release so upgrade and rollback both stay valid.
+    if ($Manifest.version -ne '0.2.0a1') {
+        $mcp.mcpServers['nmr-companion']['env_vars'] = @('NMR_COMPANION_PROJECT')
+    }
     $files[$pluginPrefix + '.mcp.json'] = $Utf8.GetBytes(($mcp | ConvertTo-Json -Depth 8))
     return $files
 }
@@ -205,9 +216,9 @@ function Read-Manifest([string]$Directory, [string]$ExpectedHash = '') {
         $path = Resolve-Child $Directory $property.Name
         if ($expected.ContainsKey($property.Name)) { throw 'Duplicate package path.' }
         $expected[$property.Name] = $true
+        $file = [IO.FileInfo]$path
         if ($property.Value.sha256 -notmatch '^[a-f0-9]{64}$' -or
-            -not (Test-Path -LiteralPath $path -PathType Leaf) -or
-            (Get-Item -LiteralPath $path).Length -ne $property.Value.size -or
+            -not $file.Exists -or $file.Length -ne $property.Value.size -or
             (Get-Sha $path) -ne $property.Value.sha256) {
             throw "Package file missing or changed: $($property.Name)"
         }
@@ -224,7 +235,9 @@ function Read-Manifest([string]$Directory, [string]$ExpectedHash = '') {
         }
     }
     $actualNames = @($manifest.launchers.PSObject.Properties.Name | Sort-Object)
-    if (($actualNames -join '|') -ne (($EntryPoints | Sort-Object) -join '|')) {
+    $native = $manifest.PSObject.Properties['desktop_frontend'] -and $manifest.desktop_frontend -eq 'qt-widgets'
+    $requiredNames = if ($native) { $EntryPoints } else { $LegacyEntryPoints }
+    if (($actualNames -join '|') -ne (($requiredNames | Sort-Object) -join '|')) {
         throw 'Package launcher contract is incomplete or unsupported.'
     }
     foreach ($property in $manifest.launchers.PSObject.Properties) {
@@ -265,11 +278,76 @@ function Read-State([string]$Directory) {
 
 function Assert-Launchers($State) {
     if (-not $State) { return }
-    foreach ($name in $EntryPoints) {
+    $names = @($State.launcher_hashes.PSObject.Properties.Name)
+    if (@($LegacyEntryPoints | Where-Object { $_ -notin $names }).Count -or
+        @($names | Where-Object { $_ -notin $EntryPoints }).Count) {
+        throw 'Installation launcher inventory is invalid; files were preserved.'
+    }
+    foreach ($name in $names) {
         $path = Resolve-Child $Root $name
         $expected = $State.launcher_hashes.PSObject.Properties[$name].Value
         if (-not (Test-Path -LiteralPath $path) -or (Get-Sha $path) -ne $expected) {
             throw "Installed launcher changed; preserved: $name"
+        }
+    }
+}
+
+function Get-ManagerContext($State) {
+    $managerId = $State.active
+    if ($State.PSObject.Properties['manager']) { $managerId = $State.manager.release }
+    $release = @($State.releases | Where-Object { $_.id -eq $managerId })
+    if ($release.Count -ne 1) { throw 'The installation manager source release is missing.' }
+    $directory = Resolve-Child $Root ('releases/' + $managerId)
+    $manifest = Read-Manifest $directory $release[0].manifest_sha256
+    $hash = $manifest.files.'Manage-Installation.ps1'.sha256
+    if ($State.PSObject.Properties['manager']) {
+        if ($State.manager.manifest_sha256 -ne $release[0].manifest_sha256 -or
+            $State.manager.script_sha256 -ne $hash) {
+            throw 'Installation manager provenance changed; files were preserved.'
+        }
+    }
+    return [pscustomobject]@{ Directory = $directory; Manifest = $manifest;
+        Record = [pscustomobject]@{ release = $managerId;
+            manifest_sha256 = $release[0].manifest_sha256; script_sha256 = $hash } }
+}
+
+function Get-LauncherSources([string]$Directory, $Manifest, $Manager) {
+    $sources = @{}
+    foreach ($property in $Manifest.launchers.PSObject.Properties) {
+        $sources[$property.Name] = Resolve-Child $Directory $property.Value
+    }
+    foreach ($name in $MaintenanceEntryPoints) {
+        $entry = $Manager.Manifest.launchers.PSObject.Properties[$name]
+        if ($entry) { $sources[$name] = Resolve-Child $Manager.Directory $entry.Value }
+    }
+    return $sources
+}
+
+function Assert-LauncherTransition($State, $Sources, [switch]$Recovery) {
+    $old = @{}
+    if ($State) {
+        foreach ($property in $State.launcher_hashes.PSObject.Properties) {
+            if ($property.Name -notin $EntryPoints) { throw 'Unsupported installed launcher inventory.' }
+            $old[$property.Name] = $property.Value
+        }
+    }
+    foreach ($name in @(@($old.Keys) + @($Sources.Keys) | Sort-Object -Unique)) {
+        $path = Resolve-Child $Root $name
+        $newHash = if ($Sources.ContainsKey($name)) { Get-Sha $Sources[$name] } else { '' }
+        if (Test-Path -LiteralPath $path) {
+            $actual = Get-Sha $path
+            if (($old.ContainsKey($name) -and $actual -ne $old[$name] -and
+                 (-not $Recovery -or $actual -ne $newHash)) -or
+                (-not $old.ContainsKey($name) -and (-not $Recovery -or $actual -ne $newHash))) {
+                throw "Unowned or modified entrypoint was preserved: $name"
+            }
+        } elseif ($old.ContainsKey($name) -and -not $Recovery) {
+            throw "Installed launcher missing; preserved: $name"
+        }
+        $temporary = $path + '.new'
+        if ((Test-Path -LiteralPath $temporary) -and
+            (-not $Recovery -or (Get-Sha $temporary) -ne $newHash)) {
+            throw 'Unknown activation staging file was preserved.'
         }
     }
 }
@@ -298,8 +376,18 @@ function Assert-Stopped {
     }
 }
 
-function Activate-Release($NewState, [string]$Directory, $Manifest, [switch]$Recovery) {
+function Activate-Release($NewState, [string]$Directory, $Manifest, [switch]$Recovery,
+                          [switch]$UpgradeManager) {
     $oldState = Read-State $Root
+    if ($UpgradeManager -or -not $oldState) {
+        $managerState = [pscustomobject]@{ active = $NewState.active; releases = $NewState.releases }
+    } elseif ($Recovery -and $NewState.PSObject.Properties['manager']) {
+        $managerState = $NewState
+    } else { $managerState = $oldState }
+    $manager = Get-ManagerContext $managerState
+    $NewState | Add-Member -MemberType NoteProperty -Name manager -Value $manager.Record -Force
+    $launcherSources = Get-LauncherSources $Directory $Manifest $manager
+    Assert-LauncherTransition $oldState $launcherSources -Recovery:$Recovery
     $adapterFiles = Get-AdapterFiles $Directory $Manifest
     Assert-AdapterOwnership $oldState $adapterFiles -Recovery:$Recovery
     $adapterHashes = [ordered]@{}
@@ -308,22 +396,28 @@ function Activate-Release($NewState, [string]$Directory, $Manifest, [switch]$Rec
     }
     $NewState | Add-Member -MemberType NoteProperty -Name adapter_hashes -Value $adapterHashes -Force
     $hashes = [ordered]@{}
-    foreach ($name in $EntryPoints) {
-        $relative = $Manifest.launchers.PSObject.Properties[$name].Value
-        $hashes[$name] = $Manifest.files.PSObject.Properties[$relative].Value.sha256
+    foreach ($name in ($launcherSources.Keys | Sort-Object)) {
+        $hashes[$name] = Get-Sha $launcherSources[$name]
     }
     $NewState.launcher_hashes = $hashes
     Write-AtomicJson (Join-Path $Root 'pending.json') $NewState
-    foreach ($name in $EntryPoints) {
-        $source = Resolve-Child $Directory $Manifest.launchers.PSObject.Properties[$name].Value
+    foreach ($name in ($launcherSources.Keys | Sort-Object)) {
+        $source = $launcherSources[$name]
         $target = Resolve-Child $Root $name
         $temporary = $target + '.new'
-        if (Test-Path -LiteralPath $temporary) { throw "Unexpected staging file: $temporary" }
+        if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary }
         Copy-Item -LiteralPath $source -Destination $temporary
         if (Test-Path -LiteralPath $target) {
             [IO.File]::Replace($temporary, $target, [NullString]::Value)
         } else {
             [IO.File]::Move($temporary, $target)
+        }
+    }
+    if ($oldState) {
+        foreach ($property in $oldState.launcher_hashes.PSObject.Properties) {
+            if (-not $launcherSources.ContainsKey($property.Name)) {
+                Remove-Item -LiteralPath (Resolve-Child $Root $property.Name)
+            }
         }
     }
     Write-AdapterFiles $adapterFiles
@@ -378,6 +472,12 @@ try {
     if ($Action -ne 'Recover') {
         Assert-Launchers $state
         Assert-AdapterOwnership $state @{}
+        if ($state) {
+            $currentManager = Get-ManagerContext $state
+            if ((Get-Sha (Resolve-Child $Root 'Manage-Installation.ps1')) -ne $currentManager.Record.script_sha256) {
+                throw 'Installed manager differs from its recorded source; files were preserved.'
+            }
+        }
     }
     Assert-Stopped
 
@@ -385,6 +485,13 @@ try {
         $digest = Get-Sha (Join-Path $Bundle 'manifest.json')
         $id = $manifest.version + '-' + $digest.Substring(0, 12)
         Assert-AdapterOwnership $state (Get-AdapterFiles $Bundle $manifest)
+        # Installing an old runtime must not replace the manager that understands
+        # retained native releases. Rollback and repeat Install share this policy.
+        $promoteManager = (-not $state) -or $manifest.version -ne '0.2.0a1'
+        if ($promoteManager) {
+            $candidateManager = [pscustomobject]@{ Directory = $Bundle; Manifest = $manifest }
+        } else { $candidateManager = Get-ManagerContext $state }
+        Assert-LauncherTransition $state (Get-LauncherSources $Bundle $manifest $candidateManager)
         $releases = Resolve-Child $Root 'releases'
         if (-not (Test-Path -LiteralPath $releases)) { New-Item -ItemType Directory -Path $releases | Out-Null }
         $destination = Resolve-Child $Root ('releases/' + $id)
@@ -403,7 +510,7 @@ try {
         }
         $next = [pscustomobject]@{ schema_version = 1; product = 'nmr-companion';
             active = $id; previous = $previous; releases = @($known); launcher_hashes = $null }
-        Activate-Release $next $destination $manifest
+        Activate-Release $next $destination $manifest -UpgradeManager:$promoteManager
         [pscustomobject]@{ action = 'installed'; version = $manifest.version; root = $Root;
             rollback = $previous; project_data = 'retained'; host_registration = 'unchanged' } | ConvertTo-Json
     } elseif ($Action -eq 'Rollback' -or $Action -eq 'Recover') {
@@ -422,22 +529,6 @@ try {
         if ($release.Count -ne 1) { throw 'Recovery or rollback release is missing.' }
         $directory = Resolve-Child $Root ('releases/' + $release[0].id)
         $manifest = Read-Manifest $directory $release[0].manifest_sha256
-        if ($Action -eq 'Recover') {
-            foreach ($name in $EntryPoints) {
-                $path = Resolve-Child $Root $name
-                $newHash = $manifest.files.PSObject.Properties[$manifest.launchers.PSObject.Properties[$name].Value].Value.sha256
-                if (Test-Path -LiteralPath $path) {
-                    $actual = Get-Sha $path
-                    $oldHash = if ($state) { $state.launcher_hashes.PSObject.Properties[$name].Value } else { '' }
-                    if ($actual -ne $newHash -and $actual -ne $oldHash) { throw "Modified entrypoint was preserved: $name" }
-                }
-                $temporary = $path + '.new'
-                if (Test-Path -LiteralPath $temporary) {
-                    if ((Get-Sha $temporary) -ne $newHash) { throw 'Unknown activation staging file was preserved.' }
-                    Remove-Item -LiteralPath $temporary
-                }
-            }
-        }
         Activate-Release $next $directory $manifest -Recovery:($Action -eq 'Recover')
         [pscustomobject]@{ action = $Action.ToLowerInvariant(); active = $next.active; project_data = 'retained' } | ConvertTo-Json
     } elseif ($Action -eq 'Verify') {
@@ -447,6 +538,17 @@ try {
             $directory = Resolve-Child $Root ('releases/' + $release.id)
             $verified = Read-Manifest $directory $release.manifest_sha256
             if ($release.id -eq $state.active) { $activeManifest = $verified; $activeDirectory = $directory }
+        }
+        $manager = Get-ManagerContext $state
+        $expectedLaunchers = Get-LauncherSources $activeDirectory $activeManifest $manager
+        $ownedNames = @($state.launcher_hashes.PSObject.Properties.Name | Sort-Object)
+        if (($expectedLaunchers.Keys | Sort-Object) -join '|' -cne ($ownedNames -join '|')) {
+            throw 'Launcher inventory differs from the active runtime and retained manager.'
+        }
+        foreach ($name in $expectedLaunchers.Keys) {
+            if ((Get-Sha $expectedLaunchers[$name]) -ne $state.launcher_hashes.PSObject.Properties[$name].Value) {
+                throw 'Launcher provenance differs from the active runtime and retained manager.'
+            }
         }
         $expectedAdapter = Get-AdapterFiles $activeDirectory $activeManifest
         $ownedAdapter = Get-AdapterHashes $state
@@ -485,7 +587,9 @@ try {
             Remove-Item -LiteralPath (Resolve-Child $Root $relative)
         }
         Remove-EmptyAdapterDirectories $adapterHashes.Keys
-        foreach ($name in $EntryPoints) { Remove-Item -LiteralPath (Resolve-Child $Root $name) }
+        foreach ($name in $state.launcher_hashes.PSObject.Properties.Name) {
+            Remove-Item -LiteralPath (Resolve-Child $Root $name)
+        }
         Remove-Item -LiteralPath (Join-Path $Root 'installation.json')
         if ($RemoveDefaultProject -and (Test-Path -LiteralPath $defaultProject)) {
             Remove-Item -LiteralPath $defaultProject

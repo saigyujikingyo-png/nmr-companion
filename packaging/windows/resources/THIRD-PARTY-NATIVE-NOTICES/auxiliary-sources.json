@@ -1,0 +1,23 @@
+{
+  "scope": "Versions identified from embedded Mesa 11.2.2 and LLVM 3.6.2 strings in the unmodified upstream opengl32sw.dll.",
+  "sources": [
+    {
+      "name": "Mesa",
+      "version": "11.2.2",
+      "url": "https://archive.mesa3d.org/older-versions/11.x/11.2.2/mesa-11.2.2.tar.xz",
+      "source_archive": "https://archive.mesa3d.org/older-versions/11.x/11.2.2/mesa-11.2.2.tar.xz",
+      "file": "auxiliary/288ddfae338be168ef2492c21de42ee2f5c8ebc5a734b4e58b37007141bc2d6d.txt",
+      "sha256": "288ddfae338be168ef2492c21de42ee2f5c8ebc5a734b4e58b37007141bc2d6d",
+      "archive_sha256": "40e148812388ec7c6d7b6657d5a16e2e8dabba8b97ddfceea5197947647bdfb4",
+      "archive_member": "mesa-11.2.2/docs/license.html"
+    },
+    {
+      "name": "LLVM",
+      "version": "3.6.2",
+      "url": "https://releases.llvm.org/3.6.2/LICENSE.TXT",
+      "source_archive": "https://releases.llvm.org/3.6.2/llvm-3.6.2.src.tar.xz",
+      "file": "auxiliary/e3bc36440fc927c62d5cc24efeefe225a14d4e34ffeb0c92e430625cce9ee444.txt",
+      "sha256": "e3bc36440fc927c62d5cc24efeefe225a14d4e34ffeb0c92e430625cce9ee444"
+    }
+  ]
+}

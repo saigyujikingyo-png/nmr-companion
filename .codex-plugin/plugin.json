@@ -1,7 +1,7 @@
 {
   "name": "nmr-companion",
-  "version": "0.2.0-alpha.1",
-  "description": "Editable local NMR workbench for organic evidence and signed relaxation analysis.",
+  "version": "0.2.0-alpha.2",
+  "description": "Native Windows NMR workbench and shared MCP tools for organic evidence and signed relaxation analysis.",
   "author": {
     "name": "NMR Companion contributors"
   },
@@ -12,10 +12,10 @@
   "interface": {
     "displayName": "NMR Companion",
     "shortDescription": "Shared NMR projects for people and agents.",
-    "longDescription": "Prerelease: shared GUI/MCP projects, qualified 1D and processed COSY/HSQC imports, structures and evidence, yield/recovery, explicit conditions, T1/T2 fits and revision-bound exports. Instrument, model and host qualification is recorded separately.",
+    "longDescription": "Prerelease: a native Qt Widgets Windows workbench and shared MCP projects, qualified 1D and processed COSY/HSQC imports, structures and evidence, yield/recovery, explicit conditions, T1/T2 fits and revision-bound exports. Instrument, model and host qualification is recorded separately.",
     "developerName": "NMR Companion contributors",
     "category": "Productivity",
-    "brandColor": "#147D83",
+    "brandColor": "#245B8C",
     "capabilities": [],
     "defaultPrompt": "Help me analyse NMR data with explicit units, provenance and editable results."
   }

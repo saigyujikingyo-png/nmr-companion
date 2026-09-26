@@ -4,6 +4,9 @@
       "command": "nmr-companion",
       "args": [
         "mcp"
+      ],
+      "env_vars": [
+        "NMR_COMPANION_PROJECT"
       ]
     }
   }
