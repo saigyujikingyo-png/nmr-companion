@@ -20,8 +20,12 @@ every host. Private course references and real input files are not public fixtur
 | Package lifecycle | [Packaging tests](../tests/test_packaging.py) cover integrity, upgrade, rollback, recovery, launcher locks, preserved user data and guarded removal. Test fixtures and source builds do not establish a fresh installed runtime, clean-device acceptance or a published release. |
 | Native software | The independent core does not require native Mnova. No native Mnova acceptance is inferred here. |
 
-The final local source check completed Ruff, **259 passing Python tests and 3
-platform skips** (82.31 seconds), 12 passing Node tests, and wheel/sdist builds.
+The complete local science, UI and delivery checkpoint completed Ruff, **259
+passing Python tests and 3 platform skips** (82.31 seconds), 12 passing Node tests,
+and wheel/sdist builds. A subsequent packaging-only correction adds the SQLite
+notice to tracked source and rejects ignored or untracked build inputs before
+downloading the runtime; its six focused checks pass. Exact release-commit CI
+results are recorded separately in the release evidence.
 The three skipped cases require creating Windows file symlinks without the
 necessary privilege. A separate actual Windows directory-junction check rejected
 reparse delivery before writing; it does not substitute for those three cases.

@@ -174,6 +174,14 @@ def build_input_hashes(repository: Path) -> dict[str, str]:
     return {path.relative_to(repository).as_posix(): sha256(path) for path in sorted(paths)}
 
 
+def assert_tracked_inputs(repository: Path, inputs: dict[str, str]) -> None:
+    """Git cleanliness excludes ignored files; every build input must be tracked."""
+    tracked = set(run(["git", "ls-files", "--cached", "-z"], cwd=repository).split("\0"))
+    missing = sorted(set(inputs) - tracked)
+    if missing:
+        raise ValueError("Untracked build inputs are not allowed: " + ", ".join(missing))
+
+
 def remove_owned_tree(path: Path, owner: Path) -> None:
     resolved = path.resolve()
     if resolved == owner.resolve() or not resolved.is_relative_to(owner.resolve()):
@@ -211,6 +219,9 @@ def build(args: argparse.Namespace) -> Path:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.+-]*", version):
         raise ValueError("Product version is not a safe release identifier")
     pin = json.loads((resources / "python-runtime.json").read_text("utf-8"))
+    inputs = build_input_hashes(repository)
+    assert_tracked_inputs(repository, inputs)
+    source = git_evidence(repository)
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     name = f"nmr-companion-{version}-windows-x64"
@@ -218,8 +229,6 @@ def build(args: argparse.Namespace) -> Path:
     if destination.exists():
         raise FileExistsError(f"Refusing to replace an existing package: {destination}")
     archive = download_runtime(pin, output / "cache", args.python_archive)
-    inputs = build_input_hashes(repository)
-    source = git_evidence(repository)
     with tempfile.TemporaryDirectory(prefix="nmr-build-", dir=output) as temporary:
         working = Path(temporary)
         bundle = working / name
@@ -307,6 +316,7 @@ def build(args: argparse.Namespace) -> Path:
         })
         if build_input_hashes(repository) != inputs or git_evidence(repository) != source:
             raise RuntimeError("Build inputs changed during packaging; stop writers and rebuild")
+        assert_tracked_inputs(repository, inputs)
         source["build_inputs"] = inputs
         create_manifest(bundle, {
             "version": version, "platform": "windows-x64",

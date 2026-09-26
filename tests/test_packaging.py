@@ -1,4 +1,5 @@
 """Release builder boundaries and real Windows installer behavior in temp roots."""
+import argparse
 import ctypes
 import importlib.util
 import io
@@ -94,6 +95,68 @@ def test_builder_omits_absolute_generated_scripts_and_corrects_installed_record(
     assert record.read_text().splitlines() == ["example.py,,", "example-1.dist-info/RECORD,,"]
     with pytest.raises(ValueError, match="outside"):
         builder.remove_owned_tree(tmp_path, site)
+
+
+def git(repository, *arguments):
+    return subprocess.check_output(
+        ["git", "-C", str(repository), *arguments], text=True, encoding="utf-8", stderr=subprocess.PIPE
+    ).strip()
+
+
+@pytest.mark.parametrize("name", ["LICENSE.sqlite.txt", "ordinary-untracked-input.txt"])
+def test_build_inputs_reject_ignored_and_untracked_files_until_explicitly_added(tmp_path, name):
+    git(tmp_path, "init", "--quiet")
+    (tmp_path / ".gitignore").write_text("*.sqlite*\n", encoding="utf-8")
+    (tmp_path / "tracked.txt").write_text("tracked input", encoding="utf-8")
+    git(tmp_path, "add", ".gitignore", "tracked.txt")
+    candidate = tmp_path / name
+    candidate.write_text("must be represented in source", encoding="utf-8")
+    if name == "LICENSE.sqlite.txt":
+        assert git(tmp_path, "status", "--porcelain", "--untracked-files=all").find(name) == -1
+        assert git(tmp_path, "check-ignore", name) == name
+    inputs = {"tracked.txt": builder.sha256(tmp_path / "tracked.txt"), name: builder.sha256(candidate)}
+    with pytest.raises(ValueError, match="Untracked build inputs") as failure:
+        builder.assert_tracked_inputs(tmp_path, inputs)
+    assert name in str(failure.value)
+    git(tmp_path, "add", "-f", name)
+    builder.assert_tracked_inputs(tmp_path, inputs)
+
+
+def test_tracked_dirty_development_inputs_remain_allowed_and_reported_dirty(tmp_path):
+    git(tmp_path, "init", "--quiet")
+    for name in ("pyproject.toml", "uv.lock", "tracked.txt"):
+        (tmp_path / name).write_text("initial fixture", encoding="utf-8")
+    git(tmp_path, "add", "pyproject.toml", "uv.lock", "tracked.txt")
+    git(tmp_path, "-c", "user.name=NMR packaging test", "-c", "user.email=nmr-tests@example.invalid",
+        "commit", "--quiet", "-m", "Temporary packaging fixture")
+    (tmp_path / "tracked.txt").write_text("intentional development edit", encoding="utf-8")
+    builder.assert_tracked_inputs(tmp_path, {"tracked.txt": builder.sha256(tmp_path / "tracked.txt")})
+    assert builder.git_evidence(tmp_path)["dirty"] is True
+
+
+@WINDOWS
+def test_untracked_input_gate_runs_before_runtime_download_or_output_creation(tmp_path, monkeypatch):
+    repository = tmp_path / "source"
+    repository.mkdir()
+    git(repository, "init", "--quiet")
+    resources = repository / "packaging/windows"
+    resources.mkdir(parents=True)
+    builder.write_json(resources / "python-runtime.json", {"version": "3.12.14"})
+    (repository / "pyproject.toml").write_text('[project]\nversion="0.2.0a1"\n', encoding="utf-8")
+    for name in ("uv.lock", "LICENSE", "README.md", "docs/INSTALLATION.md",
+                 "scripts/build_windows_bundle.py", ".codex-plugin/plugin.json"):
+        file = repository / name
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text("build fixture", encoding="utf-8")
+
+    def forbidden_download(*_args, **_kwargs):
+        raise AssertionError("Runtime download was reached before tracking validation")
+
+    monkeypatch.setattr(builder, "download_runtime", forbidden_download)
+    output = tmp_path / "output"
+    with pytest.raises(ValueError, match="Untracked build inputs"):
+        builder.build(argparse.Namespace(repository=repository, output=output, python_archive=None, uv="uv"))
+    assert not output.exists()
 
 
 def make_bundle(directory, version="0.2.0a1", marker="first"):

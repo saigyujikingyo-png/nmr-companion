@@ -204,7 +204,9 @@ runtime provenance, dependency versions and every package file's size/hash.
 Source plugin identity/version and all skill files are included as adapter inputs;
 device-specific absolute MCP paths are generated only during installation. They
 are not baked into public release files. Build inputs changing during packaging
-cause the build to fail.
+cause the build to fail. Every packaged source input must also be tracked by Git;
+ignored or untracked files fail before runtime download or output creation. Dirty
+tracked development builds remain explicitly marked dirty in their manifest.
 `build-evidence.json` and the adjacent `.build.json` report measured import,
 CLI startup (`--help`), self-test and package size. Installed launcher/GUI/MCP, clean-device and host-model
 tests remain separate acceptance work.
