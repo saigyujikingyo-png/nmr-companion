@@ -136,6 +136,51 @@ class SpectrumView(QtWidgets.QWidget):
         self.clear_button.setEnabled(False)
         self.clear_button.clicked.connect(self.clear_region)
         self.region_readout = _label("No region selected.")
+        self.integral_table = QtWidgets.QTableView(self)
+        self.integral_table.setAccessibleName("Saved integrals")
+        self.integral_model = QtGui.QStandardItemModel(0, 7, self)
+        self.integral_model.setHorizontalHeaderLabels(
+            ["Integral", "Spectrum", "Lower / ppm", "Upper / ppm", "Signed area", "Unit", "State"]
+        )
+        self.integral_table.setModel(self.integral_model)
+        self.integral_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.integral_table.setSelectionBehavior(
+            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
+        )
+        self.integral_table.setAlternatingRowColors(True)
+        self.integral_table.setWordWrap(False)
+        self.integral_table.setTextElideMode(QtCore.Qt.TextElideMode.ElideRight)
+        self.integral_table.setSizeAdjustPolicy(
+            QtWidgets.QAbstractScrollArea.SizeAdjustPolicy.AdjustIgnored
+        )
+        self.integral_table.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed
+        )
+        self.integral_table.setMinimumWidth(0)
+        header = self.integral_table.horizontalHeader()
+        header.setMinimumSectionSize(40)
+        for column in (0, 1):
+            header.setSectionResizeMode(column, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        metrics = self.integral_table.fontMetrics()
+        for column, sample in (
+            (2, "-123.456789"),
+            (3, "-123.456789"),
+            (4, "-0.123456789"),
+            (5, "intensity*ppm"),
+            (6, "current"),
+        ):
+            header.setSectionResizeMode(column, QtWidgets.QHeaderView.ResizeMode.Fixed)
+            caption = self.integral_model.headerData(column, QtCore.Qt.Orientation.Horizontal)
+            header.resizeSection(
+                column,
+                max(metrics.horizontalAdvance(sample), metrics.horizontalAdvance(caption)) + 16,
+            )
+        self.integral_table.verticalHeader().hide()
+        self.integral_table.verticalHeader().setSectionResizeMode(
+            QtWidgets.QHeaderView.ResizeMode.Fixed
+        )
+        self.integral_table.verticalHeader().setDefaultSectionSize(max(24, metrics.height() + 8))
+        self.integral_table.hide()
         bar = QtWidgets.QHBoxLayout()
         bar.addWidget(self.select_button)
         bar.addWidget(self.clear_button)
@@ -143,6 +188,7 @@ class SpectrumView(QtWidgets.QWidget):
         layout = _layout(self)
         layout.addLayout(bar)
         layout.addWidget(self.plot, 1)
+        layout.addWidget(self.integral_table)
         layout.addWidget(self.readout)
 
     def set_spectra(
@@ -154,6 +200,8 @@ class SpectrumView(QtWidgets.QWidget):
             raise ValueError("Seconds and ppm cannot share one spectrum axis.")
         self.plot.clear()
         self.legend.clear()
+        self.integral_model.removeRows(0, self.integral_model.rowCount())
+        self.integral_table.hide()
         self._series = []
         self.clear_region()
         self.select_button.setEnabled(bool(spectra))
@@ -189,7 +237,7 @@ class SpectrumView(QtWidgets.QWidget):
             return
         self.reset_view()
         versions = {s[0]: s[1] for s in self._series}
-        ymax = max(float(np.max(s[4])) for s in self._series)
+        names = {s[0]: s[2] for s in self._series}
         for integral in integrals or []:
             if integral.spectrum_id not in versions:
                 continue
@@ -206,13 +254,52 @@ class SpectrumView(QtWidgets.QWidget):
                 if integral.spectrum_version != versions[integral.spectrum_id]
                 else "current"
             )
-            text = pg.TextItem(
-                f"{integral.name}: {integral.area:.5g} {integral.unit} [{state}]",
-                color=INK,
-                anchor=(0.5, 1),
+            tooltip = (
+                f"{integral.name}\nSpectrum: {names[integral.spectrum_id]} ({integral.spectrum_id})\n"
+                f"Range: {integral.lower!r} to {integral.upper!r} ppm\n"
+                f"Signed area: {integral.area!r} {integral.unit}\nState: {state}\nIntegral: {integral.id}"
             )
-            text.setPos((integral.lower + integral.upper) / 2, ymax)
-            self.plot.addItem(text, ignoreBounds=True)
+            band.setToolTip(tooltip)
+            band.setAcceptHoverEvents(True)
+            values = [
+                integral.name,
+                names[integral.spectrum_id],
+                integral.lower,
+                integral.upper,
+                integral.area,
+                integral.unit,
+                state,
+            ]
+            cells = []
+            for column, value in enumerate(values):
+                item = QtGui.QStandardItem(
+                    format(value, ".10g") if isinstance(value, float) else str(value)
+                )
+                item.setEditable(False)
+                item.setData(value, QtCore.Qt.ItemDataRole.UserRole)
+                item.setToolTip(tooltip)
+                color = (
+                    RED
+                    if column == 4 and integral.area < 0
+                    else "#875414"
+                    if column == 6 and state == "stale"
+                    else INK
+                )
+                item.setForeground(QtGui.QColor(color))
+                if column in (2, 3, 4):
+                    item.setTextAlignment(
+                        QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
+                    )
+                cells.append(item)
+            self.integral_model.appendRow(cells)
+        rows = self.integral_model.rowCount()
+        if rows:
+            self.integral_table.setFixedHeight(
+                self.integral_table.horizontalHeader().sizeHint().height()
+                + min(rows, 4) * self.integral_table.verticalHeader().defaultSectionSize()
+                + 2 * self.integral_table.frameWidth()
+            )
+            self.integral_table.show()
         for peak in peaklabels or []:
             if peak.spectrum_id not in versions:
                 continue

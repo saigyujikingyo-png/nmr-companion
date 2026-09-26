@@ -22,6 +22,9 @@ reference pages, and stored fit predictions/residuals. Select compatible spectra
 with Ctrl to overlay their original signed intensities. Chemical shift decreases
 left to right; time increases. Mouse navigation changes only the view. Display
 sampling preserves extrema, while calculations always use the original arrays.
+Integral ranges remain shaded on the spectrum; a compact scrollable table below
+the plot keeps their names, bounds, signed areas, units and current/stale state
+readable without covering curves or the spectrum legend.
 Use Full range or F to reset the spectrum view. Move the region handles or enter
 explicit numeric bounds in the analysis dialog.
 

@@ -9,7 +9,7 @@ import numpy as np
 import pyqtgraph as pg
 import pytest
 
-from nmr_companion.models import Analysis, Grid, Spectrum
+from nmr_companion.models import Analysis, Grid, Integral, Spectrum
 from nmr_companion.evidence_models import Annotation, Crosspeak, Structure
 
 
@@ -534,3 +534,88 @@ def test_plot_titles_axes_legends_and_empty_grid_are_readable(make_widget):
     assert grid_view.plot.getPlotItem().titleLabel.text == ""
     assert grid_view.plot.getAxis("bottom").labelText == "x"
     assert "negative red" in grid_view.legend.text()
+
+
+def test_overlapping_integral_captions_use_bounded_table_not_plot_canvas(make_widget, qapp):
+    from nmr_companion.desktop.app import application
+    from nmr_companion.desktop.plots import SpectrumView
+
+    # Use the delivered native font/style: the Windows offscreen plugin otherwise
+    # has no system font, so its placeholder glyph widths cannot qualify layout.
+    assert application() is qapp
+    trace = spectrum([9, 8, 7, 6, 5], [0, 2, -3, 1, 0])
+    trace.version = 2
+    integrals = [
+        Integral(
+            id=f"integral_{i}",
+            spectrum_id=trace.id,
+            spectrum_version=1 if i % 2 else 2,
+            name=(f"Overlapping reference {i} " + "long-description " * 12)[:200],
+            lower=6.1234567890123 + i / 100,
+            upper=8.9876543210987,
+            area=(-1 if i % 2 else 1) * 0.123456789012345 * (i + 1),
+        )
+        for i in range(6)
+    ]
+    before = [trace.model_dump(), [value.model_dump() for value in integrals]]
+    widget = make_widget(SpectrumView)
+    widget.resize(760, 540)
+    widget.set_spectra([trace], integrals)
+    widget.show()
+    qapp.processEvents()
+    captions = [item for item in widget.plot.items() if isinstance(item, pg.TextItem)]
+    assert captions == [], "Saved integral captions must not overlap data or legend space"
+    bands = [
+        item
+        for item in widget.plot.items()
+        if isinstance(item, pg.LinearRegionItem) and item is not widget.region
+    ]
+    assert len(bands) == 6 and all(not band.movable for band in bands)
+    table = widget.integral_table
+    model = table.model()
+    assert table.isVisible() and model.rowCount() == 6
+    assert model.columnCount() == 7
+    assert table.geometry().top() > widget.plot.geometry().bottom()
+    assert (
+        table.height()
+        <= table.horizontalHeader().height()
+        + 4 * table.verticalHeader().defaultSectionSize()
+        + 2 * table.frameWidth()
+    )
+    assert table.verticalScrollBar().maximum() > 0
+    assert table.horizontalScrollBar().maximum() == 0
+    assert widget.width() == 760 and widget.minimumSizeHint().width() <= 760
+    assert table.wordWrap() is False
+    assert table.editTriggers() == QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers
+    for row, integral in enumerate(integrals):
+        raw = [
+            model.index(row, column).data(QtCore.Qt.ItemDataRole.UserRole) for column in range(7)
+        ]
+        assert raw == [
+            integral.name,
+            trace.name,
+            integral.lower,
+            integral.upper,
+            integral.area,
+            "intensity*ppm",
+            "stale" if row % 2 else "current",
+        ]
+        tooltip = model.index(row, 0).data(QtCore.Qt.ItemDataRole.ToolTipRole)
+        assert integral.name in tooltip and repr(integral.area) in tooltip
+        assert repr(integral.lower) in tooltip and integral.spectrum_id in tooltip
+        assert any(tooltip == band.toolTip() for band in bands)
+        assert model.index(row, 4).data() == format(integral.area, ".10g")
+    assert model.headerData(2, QtCore.Qt.Orientation.Horizontal) == "Lower / ppm"
+    assert model.headerData(3, QtCore.Qt.Orientation.Horizontal) == "Upper / ppm"
+    assert model.headerData(4, QtCore.Qt.Orientation.Horizontal) == "Signed area"
+    assert len(widget.legend.items) == 1
+    assert widget.nearest_point(7) == (7.0, -3.0)
+    widget.set_region(6.5, 7.5)
+    assert widget.selected_region() == (6.5, 7.5)
+    assert [trace.model_dump(), [value.model_dump() for value in integrals]] == before
+    widget.set_spectra([spectrum([2, 1, 0], [0, 1, 0], sid="other")], integrals)
+    assert table.isHidden() and model.rowCount() == 0
+    widget.set_spectra([trace], integrals[:1])
+    assert model.rowCount() == 1 and not table.isHidden()
+    widget.set_spectra([])
+    assert table.isHidden() and model.rowCount() == 0
