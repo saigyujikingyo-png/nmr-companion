@@ -250,7 +250,7 @@ def test_native_launcher_waits_without_console_and_preserves_installation_lock(n
         gate.write_text("close synthetic runtime", encoding="ascii")
         output, errors = process.communicate(timeout=20)
     assert process.returncode == 0, output + errors
-    probe = json.loads(result_path.read_text())
+    probe = json.loads(result_path.read_text(encoding="utf-8"))
     assert probe["console"] == 0
     assert probe["args"] == ["-I", "-B", "-m", "nmr_companion", "--project", str(project), "desktop"]
     manage(root, "Verify")

@@ -284,17 +284,22 @@ public class RuntimeProbe {
     mcp = json.loads((root / "codex-marketplace/plugins/nmr-companion/.mcp.json").read_text("utf-8"))
     server = mcp["mcpServers"]["nmr-companion"]
     project = str(tmp_path / "selected project \u5316\u5b66" / "workspace.nmrproj")
-    base_environment = {key: os.environ[key] for key in
-                        ("SystemRoot", "WINDIR", "PATH", "PATHEXT", "TEMP", "TMP", "USERPROFILE")
-                        if key in os.environ}
+    # Exercise the real SDK baseline plus the product allowlist. Inheriting the
+    # runner console or stripping Windows profile variables does not model MCP.
+    from mcp.client.stdio import get_default_environment
+    base_environment = get_default_environment()
     for selected, expected in (({}, "<unset>"), ({"NMR_COMPANION_PROJECT": project}, project)):
         host_environment = {**selected, "NMR_UNLISTED_TEST_VALUE": "unlisted host value"}
         forwarded = {key: value for key, value in host_environment.items()
                      if key in server.get("env_vars", [])}
-        result = subprocess.run(
-            [server["command"], *server["args"]], capture_output=True, timeout=20,
-            env={**base_environment, **forwarded},
-        )
+        try:
+            result = subprocess.run(
+                [server["command"], *server["args"]], capture_output=True, timeout=60,
+                stdin=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW,
+                env={**base_environment, **forwarded},
+            )
+        except subprocess.TimeoutExpired as error:
+            pytest.fail(f"Adapter probe timed out: stdout={error.stdout!r}; stderr={error.stderr!r}")
         assert result.returncode == 0, result.stderr
         lines = result.stdout.decode("ascii").splitlines()
         assert base64.b64decode(lines[0]).decode("utf-8") == expected
