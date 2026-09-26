@@ -1,0 +1,94 @@
+/* Local batch evidence workspaces. Existing spectrum views keep their layout. */
+.batch-workspace { min-width: 0; background: white; border: 1px solid var(--line); border-radius: 6px; padding: 18px; }
+.batch-workspace[hidden], .batch-view[hidden] { display: none !important; }
+.batch-heading { border-bottom: 1px solid #e8edf5; margin-bottom: 16px; padding-bottom: 5px; }
+.batch-heading h2 { margin: 0 0 8px; font-size: 16px; }
+.batch-view > h3 { margin-top: 24px; }
+.batch-view p { line-height: 1.65; }
+.batch-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin: 12px 0; }
+.batch-toolbar label { margin: 0; }
+.batch-toolbar input { width: 110px; }
+.batch-toolbar button { font-size: 10px; }
+.batch-toolbar button[aria-pressed="true"] { background: #e6edff; border-color: #99afe9; color: #274bb2; }
+.batch-panel details { border-top: 1px solid var(--line); margin: 16px 0; padding-top: 12px; }
+.batch-panel > button, .batch-panel .actions { margin: 10px 0; }
+.batch-panel form + form { border-top: 1px solid var(--line); padding-top: 18px; margin-top: 24px; }
+.batch-panel form > .primary { display: block; width: 100%; margin-top: 15px; }
+.batch-panel select[multiple] { min-height: 95px; }
+.batch-panel select[multiple] option, .linked-assignment-fields select[multiple] option { padding: 5px; font-size: 10px; }
+.batch-subpanel { margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--line); }
+.batch-subpanel form > button { margin: 12px 5px 0 0; }
+.batch-subpanel .primary { width: 100%; white-space: normal; }
+.batch-cards { display: grid; gap: 10px; margin-top: 12px; }
+.batch-card { min-width: 0; border: 1px solid #e0e6f0; border-radius: 5px; padding: 13px; background: #fbfcff; overflow: hidden; }
+.batch-card p { margin: 8px 0; font-size: 11px; }
+.batch-card .actions { flex-wrap: wrap; }
+.batch-card > button { margin-top: 10px; font-size: 10px; }
+.sample-role { color: #466498; font-weight: 550; }
+.additive-row { border: 1px solid #e0e6ef; padding: 9px; border-radius: 4px; margin: 8px 0; background: #f8faff; }
+.additive-row label { margin-top: 7px; }
+.additive-row button { margin-top: 10px; font-size: 10px; }
+.batch-table-wrap { max-width: 100%; overflow: auto; max-height: 340px; margin-top: 8px; }
+.batch-table-wrap table { margin-top: 0; }
+.batch-table-wrap th { background: #f8faff; position: sticky; top: 0; z-index: 1; }
+.batch-table-wrap td { vertical-align: top; }
+.batch-table-wrap input, .batch-table-wrap select { margin: 0; min-width: 80px; max-width: 150px; padding: 6px; font-size: 10px; }
+.batch-table-wrap button { font-size: 9px; padding: 6px; }
+#atomTable input[type="number"] { min-width: 85px; }
+.batch-draft-status { background: #eef3fc; border: 1px solid #dce5f6; border-radius: 4px; padding: 9px 11px; color: #536d97; font-size: 10px; font-variant-numeric: tabular-nums; }
+.batch-draft-alert { margin: 0 0 10px; flex: 0 0 auto; }
+#structureCanvas { height: 330px; touch-action: none; border: 1px solid #e3e8f1; border-radius: 4px; cursor: crosshair; }
+#gridCanvas { height: 420px; touch-action: none; border: 1px solid #e3e8f1; border-radius: 4px; cursor: crosshair; }
+#referenceCanvas { height: 380px; touch-action: none; border: 1px solid #dfe5ed; border-radius: 4px; cursor: crosshair; }
+.grid-legend { display: flex; flex-wrap: wrap; gap: 12px; margin-left: auto !important; font-size: 10px; }
+.positive-key, .negative-key { display: inline-flex; gap: 6px; align-items: center; }
+.positive-key:before, .negative-key:before { content: ""; width: 10px; height: 10px; border-radius: 2px; background: #3158cf; }
+.negative-key:before { background: #cc4353; }
+.reference-toolbar { display: grid; grid-template-columns: minmax(0, 1fr) 85px; gap: 8px; align-items: end; }
+.reference-toolbar label { margin-top: 0; }
+.reference-toolbar button { grid-column: 1 / -1; justify-self: start; font-size: 10px; margin: 5px 0; }
+.comparison-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.batch-checkbox { display: flex; align-items: center; gap: 8px; flex-direction: row-reverse; justify-content: flex-end; }
+.batch-checkbox input { width: 15px; margin: 0; flex-shrink: 0; }
+.linked-assignment-fields { padding: 0 0 12px; border-bottom: 1px solid var(--line); }
+#closeWorkbench { font-size: 10px; }
+@media (min-width: 1121px) {
+  .workspace.batch-mode { overflow: hidden; }
+  .batch-workspace { flex: 1 1 auto; min-height: 280px; overflow: auto; scrollbar-gutter: stable; }
+  .batch-mode .results { flex: 0 1 200px; min-height: 100px; }
+}
+@media (max-width: 1120px) {
+  .batch-workspace { min-height: 300px; }
+}
+@media (max-width: 700px) {
+  .batch-workspace { padding: 12px; }
+  .batch-heading h2 { font-size: 14px; }
+  .batch-card { padding: 10px; }
+  .comparison-pair { grid-template-columns: 1fr; }
+  .batch-toolbar { gap: 5px; }
+  .grid-legend { margin-left: 0 !important; }
+  #gridCanvas { height: 330px; }
+  #structureCanvas { height: 300px; }
+  .header-actions { flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
+  #closeWorkbench { font-size: 9px; padding: 6px 8px; }
+}
+.panel > article.batch-subpanel { margin: 24px 0 0; padding: 20px 0 0; border-left: 0; border-top: 1px solid var(--line); }
+/* Keep every workflow reachable without off-screen tab coordinates on narrow hosts. */
+@media (max-width: 1120px) {
+  .tabs {
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    align-content: flex-start;
+    overflow: visible;
+    gap: 0 3px;
+    padding: 0 10px;
+  }
+  .tabs button {
+    flex: 0 0 auto;
+    max-width: 100%;
+    min-height: 38px;
+    padding: 10px 11px;
+    white-space: normal;
+    font-size: 11px;
+  }
+}

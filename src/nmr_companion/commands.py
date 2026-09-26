@@ -1,11 +1,15 @@
 from typing import Annotated, Literal, Union
 from pydantic import Field, TypeAdapter
-from .models import Model, Name, Identifier, Number, Positive
+from .domain import Model, Name, Identifier, Number, Positive, NonNegative
+from .evidence_commands import EVIDENCE_OPERATIONS
 
 
 class Import(Model):
     op: Literal["import"]
     path: str = Field(min_length=1, max_length=4096)
+    bruker_processing_numbers: list[Annotated[int, Field(strict=True, ge=1, le=999999)]] | None = (
+        Field(default=None, min_length=1, max_length=64)
+    )
 
 
 class Demo(Model):
@@ -50,6 +54,13 @@ class Yield(Model):
     limiting_mol: Positive
     stoichiometric_factor: Positive = 1.0
     name: Name = "Internal-standard yield"
+    recovered_integral_id: Identifier | None = None
+    recovered_protons: Positive | None = None
+    u_product_area: NonNegative | None = None
+    u_standard_area: NonNegative | None = None
+    u_recovered_area: NonNegative | None = None
+    u_standard_mol: NonNegative | None = None
+    u_limiting_mol: NonNegative | None = None
 
 
 class Fit(Model):
@@ -73,6 +84,9 @@ class Fit(Model):
 class Assign(Model):
     op: Literal["assign"]
     assignment_id: Identifier | None = None
+    sample_id: Identifier | None = None
+    candidate_id: Identifier | None = None
+    atom_ids: list[Identifier] = Field(default_factory=list, max_length=256)
     sample: Name
     atom: Name
     candidate: Name
@@ -91,10 +105,19 @@ class Undo(Model):
     target_revision: int = Field(ge=0)
 
 
-Command = Annotated[
-    Union[Import, Demo, Integrate, Process, Peaks, Yield, Fit, Assign, Remove, Undo],
-    Field(discriminator="op"),
+OP_MODELS = [
+    Import,
+    Demo,
+    Integrate,
+    Process,
+    Peaks,
+    Yield,
+    Fit,
+    Assign,
+    Remove,
+    Undo,
+    *EVIDENCE_OPERATIONS,
 ]
+Command = Annotated[Union[tuple(OP_MODELS)], Field(discriminator="op")]
 COMMAND = TypeAdapter(Command)
-OP_MODELS = [Import, Demo, Integrate, Process, Peaks, Yield, Fit, Assign, Remove, Undo]
 OPERATIONS = {c.model_fields["op"].annotation.__args__[0]: c for c in OP_MODELS}

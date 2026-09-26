@@ -5,42 +5,115 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>NMR Companion · Workbench</title>
     <link rel="stylesheet" href="/app.css" />
+    <link rel="stylesheet" href="/batch.css" />
+    <script src="/view.js" defer></script>
     <script src="/app.js" defer></script>
+    <script src="/batch.js" defer></script>
   </head>
   <body>
-    <header>
-      <a class="brand" href="/"
-        ><b>N</b
-        ><span>NMR Companion<small>LOCAL SCIENTIFIC WORKBENCH</small></span></a
-      >
+    <header class="app-header">
+      <a class="brand" href="/" aria-label="NMR Companion home">
+        <svg width="30" height="30" viewBox="0 0 30 30" aria-hidden="true">
+          <rect width="30" height="30" rx="7" fill="#3158cf" />
+          <path
+            d="M4 20h6l2-8 2 12 3-19 3 15h6"
+            fill="none"
+            stroke="white"
+            stroke-width="1.6"
+            stroke-linejoin="round"
+          />
+        </svg>
+        <span>NMR <strong>Companion</strong></span>
+      </a>
       <div class="project-heading">
         <strong id="projectName">Open a project</strong
         ><span id="revision">No project loaded</span>
       </div>
       <div class="header-actions">
-        <span class="badge">DEVELOPER ALPHA</span
-        ><button id="refresh">Refresh</button
+        <span class="badge">Developer preview</span
+        ><button id="refresh" title="Read the latest saved project">
+          Refresh</button
         ><button id="export" class="primary">Export revision</button>
       </div>
     </header>
+    <nav class="tabs ribbon" aria-label="Analysis tools" role="tablist">
+      <button
+        id="tab-organic"
+        data-tab="organic"
+        class="active"
+        role="tab"
+        aria-selected="true"
+        aria-controls="organic"
+      >
+        Organic analysis
+      </button>
+      <button
+        id="tab-relaxation"
+        data-tab="relaxation"
+        role="tab"
+        aria-selected="false"
+        aria-controls="relaxation"
+      >
+        T₁ / T₂ relaxation
+      </button>
+      <button
+        id="tab-processing"
+        data-tab="processing"
+        role="tab"
+        aria-selected="false"
+        aria-controls="processing"
+      >
+        Processing
+      </button>
+      <button
+        id="tab-evidence"
+        data-tab="evidence"
+        role="tab"
+        aria-selected="false"
+        aria-controls="evidence"
+      >
+        Assignments
+      </button>
+      <button id="tab-samples" data-tab="samples" role="tab" aria-selected="false" aria-controls="samples">Samples & conditions</button>
+      <button id="tab-correlations" data-tab="correlations" role="tab" aria-selected="false" aria-controls="correlations">2D correlations</button>
+      <button id="tab-structures" data-tab="structures" role="tab" aria-selected="false" aria-controls="structures">Structure candidates</button>
+      <button id="tab-references" data-tab="references" role="tab" aria-selected="false" aria-controls="references">Reference evidence</button>
+      <button id="tab-comparison" data-tab="comparison" role="tab" aria-selected="false" aria-controls="comparison">Compare conditions</button>
+      <button
+        id="tab-advanced"
+        data-tab="advanced"
+        role="tab"
+        aria-selected="false"
+        aria-controls="advanced"
+      >
+        Advanced
+      </button>
+      <span class="ribbon-note">Local project · Human + agent edits</span>
+    </nav>
     <div id="notice" role="status" aria-live="polite">
       Connecting to the local project…
     </div>
     <main>
-      <aside class="sidebar">
-        <div class="section-label">
-          PROJECT LIBRARY <span id="spectrumCount">0 spectra</span>
+      <aside class="sidebar" aria-label="Project data">
+        <div class="pane-heading">
+          <strong>Project data</strong><span id="spectrumCount">0 spectra</span>
         </div>
+        <label for="spectrumSearch">Find a spectrum</label
+        ><input
+          id="spectrumSearch"
+          type="search"
+          placeholder="Name or nucleus…"
+        />
         <label for="spectrumSelect">Active spectrum</label
         ><select
           id="spectrumSelect"
-          size="9"
+          size="10"
           aria-label="Active spectrum"
         ></select>
         <div id="sourceInfo" class="muted">
           Import data or load the synthetic demonstration.
         </div>
-        <details open>
+        <details id="importDetails">
           <summary>Import local data</summary>
           <form id="importForm">
             <label for="importPath">File or folder path</label
@@ -48,10 +121,14 @@
               id="importPath"
               required
               placeholder="Absolute local path"
-            /><button type="submit">Import &amp; preserve originals</button>
+            />
+            <label for="brukerProcessingNumbers">Bruker processing numbers · optional</label>
+            <input id="brukerProcessingNumbers" placeholder="Blank: decode all; or 1, 2, …" />
+            <p class="hint">Select processed datasets to decode using positive integers separated by commas. All original files remain preserved. Blank retains strict full-package decoding.</p>
+            <button type="submit">Import &amp; preserve originals</button>
           </form>
           <p class="hint">
-            Qualified 1D Bruker, numeric single-block DX, CSV or ZIP. Data stays
+            Qualified Bruker 1D / processed 2D, JCAMP-DX, CSV or ZIP. Data stays
             on this machine.
           </p>
         </details>
@@ -78,40 +155,151 @@
             /><button>Restore revision</button>
           </form>
         </details>
+
         <div class="sidebar-foot">
-          One project. Human + agent edits.<br />Every change carries its
-          observed revision.
+          Original data is preserved.<br />Changes are saved as project
+          revisions.
         </div>
       </aside>
-      <section class="workspace">
+      <section class="workspace" aria-label="Spectrum workspace">
+        <section id="batchWorkspace" class="batch-workspace" aria-label="Shared evidence workspace" hidden></section>
         <section class="plot-card">
           <div class="plot-heading">
             <div>
-              <p class="eyebrow">SPECTRUM</p>
-              <h1 id="spectrumName">A shared place to work with spectra.</h1>
+              <p class="eyebrow">ACTIVE SPECTRUM</p>
+              <h1 id="spectrumName">Import a spectrum to begin</h1>
             </div>
             <span id="domainBadge" class="pill">No spectrum</span>
+          </div>
+          <div
+            class="plot-toolbar"
+            role="toolbar"
+            aria-label="Spectrum interaction tools"
+          >
+            <div class="tool-group">
+              <button
+                data-plot-mode="inspect"
+                aria-pressed="true"
+                title="Inspect coordinates (V)"
+              >
+                Inspect <kbd>V</kbd>
+              </button>
+              <button
+                data-plot-mode="zoom"
+                aria-pressed="false"
+                title="Drag to zoom into a region (Z)"
+              >
+                Zoom <kbd>Z</kbd>
+              </button>
+              <button
+                data-plot-mode="pan"
+                aria-pressed="false"
+                title="Drag to pan the visible range (H)"
+              >
+                Pan <kbd>H</kbd>
+              </button>
+              <button
+                data-plot-mode="integrate"
+                aria-pressed="false"
+                title="Select a region for the active workflow (I)"
+              >
+                <span id="regionToolLabel">Integrate</span> <kbd>I</kbd>
+              </button>
+            </div>
+            <div class="tool-group">
+              <button id="zoomBack" title="Previous view">Back</button
+              ><button id="fitView" title="Show full spectrum (F)">
+                Full view <kbd>F</kbd></button
+              ><button
+                id="gainDown"
+                title="Reduce display intensity scale"
+                aria-label="Reduce display intensity scale"
+              >
+                −</button
+              ><button
+                id="gainUp"
+                title="Increase display intensity scale"
+                aria-label="Increase display intensity scale"
+              >
+                +
+              </button>
+            </div>
           </div>
           <canvas
             id="spectrumPlot"
             width="1100"
-            height="360"
-            aria-label="Active spectrum plot with signed intensities"
+            height="450"
+            tabindex="0"
+            role="img"
+            aria-label="Interactive active spectrum with signed intensities"
+            aria-describedby="plotHelp"
           ></canvas>
+          <div class="selection-bar">
+            <span id="cursorReadout"
+              >Move over the spectrum to inspect coordinates</span
+            ><span id="viewReadout">Full view</span>
+          </div>
+          <form
+            id="viewForm"
+            class="view-form"
+            aria-label="Set visible axis range"
+          >
+            <span>Visible range</span
+            ><label
+              >Lower<input
+                id="viewLower"
+                type="number"
+                step="any"
+                required /></label
+            ><label
+              >Upper<input
+                id="viewUpper"
+                type="number"
+                step="any"
+                required /></label
+            ><span id="axisUnit">ppm</span><button>Apply view</button>
+          </form>
+          <p id="plotHelp" class="plot-help">
+            Inspect coordinates. Z: zoom · H: pan · I: select region · F: full
+            view · Esc: cancel.
+          </p>
           <div class="plot-footer">
             <span id="plotNote"
               >Full-resolution arrays are used for every calculation.</span
             ><span id="pointCount"></span>
           </div>
         </section>
-        <nav class="tabs" aria-label="Analysis tools">
-          <button data-tab="organic" class="active">Organic analysis</button
-          ><button data-tab="relaxation">T₁ / T₂</button
-          ><button data-tab="processing">Processing</button
-          ><button data-tab="evidence">Evidence</button
-          ><button data-tab="advanced">Advanced</button>
-        </nav>
-        <section id="organic" class="panel">
+        <section class="results">
+          <div class="panel-title">
+            <div>
+              <p class="eyebrow">PROJECT RESULTS</p>
+              <h2>Computed values &amp; their evidence</h2>
+            </div>
+            <span id="resultCount" class="pill">0 analyses</span>
+          </div>
+          <div id="analyses">
+            <p class="muted">
+              Results will appear here with methods, assumptions and revision
+              status.
+            </p>
+          </div>
+        </section>
+        <div id="artifact" class="artifact"></div>
+      </section>
+      <aside class="inspector" aria-label="Analysis inspector">
+        <div class="inspector-heading">
+          <div>
+            <span class="eyebrow">INSPECTOR</span>
+            <h2 id="inspectorTitle">Organic analysis</h2>
+          </div>
+          <span class="local-dot" title="Local execution">Local</span>
+        </div>
+        <section
+          id="organic"
+          class="panel"
+          role="tabpanel"
+          aria-labelledby="tab-organic"
+        >
           <div class="two-col">
             <article>
               <p class="eyebrow">01 / INTEGRATE</p>
@@ -206,7 +394,13 @@
             </article>
           </div>
         </section>
-        <section id="relaxation" class="panel" hidden>
+        <section
+          id="relaxation"
+          class="panel"
+          role="tabpanel"
+          aria-labelledby="tab-relaxation"
+          hidden
+        >
           <div class="panel-title">
             <div>
               <p class="eyebrow">RELAXATION</p>
@@ -288,7 +482,13 @@
             <button class="primary">Integrate &amp; fit mapped traces</button>
           </form>
         </section>
-        <section id="processing" class="panel" hidden>
+        <section
+          id="processing"
+          class="panel"
+          role="tabpanel"
+          aria-labelledby="tab-processing"
+          hidden
+        >
           <div class="panel-title">
             <div>
               <p class="eyebrow">PROCESSING</p>
@@ -365,7 +565,13 @@
             ><button>Find signed peak candidates</button>
           </form>
         </section>
-        <section id="evidence" class="panel" hidden>
+        <section
+          id="evidence"
+          class="panel"
+          role="tabpanel"
+          aria-labelledby="tab-evidence"
+          hidden
+        >
           <p class="eyebrow">EVIDENCE</p>
           <h2>Keep interpretation tied to observations</h2>
           <form id="assignmentForm">
@@ -399,7 +605,18 @@
           </form>
           <div id="assignmentList"></div>
         </section>
-        <section id="advanced" class="panel" hidden>
+        <section id="samples" class="panel batch-panel" role="tabpanel" aria-labelledby="tab-samples" hidden></section>
+        <section id="correlations" class="panel batch-panel" role="tabpanel" aria-labelledby="tab-correlations" hidden></section>
+        <section id="structures" class="panel batch-panel" role="tabpanel" aria-labelledby="tab-structures" hidden></section>
+        <section id="references" class="panel batch-panel" role="tabpanel" aria-labelledby="tab-references" hidden></section>
+        <section id="comparison" class="panel batch-panel" role="tabpanel" aria-labelledby="tab-comparison" hidden></section>
+        <section
+          id="advanced"
+          class="panel"
+          role="tabpanel"
+          aria-labelledby="tab-advanced"
+          hidden
+        >
           <h2>Validated operation editor</h2>
           <p class="hint">
             This uses the same schemas, revision check and scientific service as
@@ -421,27 +638,13 @@
             <pre id="receipt"></pre>
           </details>
         </section>
-        <section class="results">
-          <div class="panel-title">
-            <div>
-              <p class="eyebrow">PROJECT RESULTS</p>
-              <h2>Computed values &amp; their evidence</h2>
-            </div>
-            <span id="resultCount" class="pill">0 analyses</span>
-          </div>
-          <div id="analyses">
-            <p class="muted">
-              Results will appear here with methods, assumptions and revision
-              status.
-            </p>
-          </div>
-        </section>
-        <div id="artifact" class="artifact"></div>
-        <footer>
-          Independent developer software · Python numerical core · Local project
-          storage · Experimental acceptance remains separate
-        </footer>
-      </section>
+      </aside>
     </main>
+    <footer class="status-bar">
+      <span>Independent NMR workbench</span
+      ><span id="draftStatus"
+        >Saved results retain their evidence and revision.</span
+      ><span>Display changes never modify original data</span>
+    </footer>
   </body>
 </html>

@@ -1,0 +1,20 @@
+{
+  "name": "nmr-companion-local",
+  "interface": {
+    "displayName": "NMR Companion (local)"
+  },
+  "plugins": [
+    {
+      "name": "nmr-companion",
+      "source": {
+        "source": "local",
+        "path": "./plugins/nmr-companion"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

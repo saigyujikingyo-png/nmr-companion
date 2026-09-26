@@ -1,6 +1,7 @@
 # Static workbench interface
 The coordinator owns api.py, service.py, web.py and cli.py.
-Frontend contributor owns only src/nmr_companion/static/index.html, app.js, app.css.
+Frontend code is in src/nmr_companion/static/ (HTML, CSS, application JS,
+display geometry and bundled font). HTTP/API changes remain coordinator-owned.
 Use plain local HTML/CSS/JS (no CDN, telemetry or external model). CSP disallows inline
 scripts/styles and external resources. Responsive accessible labels and readable
 scientific tables, never innerHTML with user values.
@@ -34,3 +35,6 @@ Required first-alpha controls:
 UI can expose JSON operation editor for advanced operations but normal first
 organic and relaxation workflows need labelled controls. Read actual scientific
 result objects from project. Demo values must say synthetic, not experimental.
+
+Display gestures, draft semantics, keyboard controls and UI verification are
+recorded in [WORKBENCH_UI.md](WORKBENCH_UI.md).

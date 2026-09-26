@@ -8,3 +8,6 @@ dist/
 *.nmrproj*
 .coverage
 local/
+
+# Required upstream notice; this is not a private SQLite database.
+!packaging/windows/resources/THIRD-PARTY-RUNTIME-NOTICES/LICENSE.sqlite.txt

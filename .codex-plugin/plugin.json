@@ -1,7 +1,7 @@
 {
   "name": "nmr-companion",
-  "version": "0.1.0-alpha.1",
-  "description": "Developer preview of an editable local NMR core for organic and relaxation workflows.",
+  "version": "0.2.0-alpha.1",
+  "description": "Editable local NMR workbench for organic evidence and signed relaxation analysis.",
   "author": {
     "name": "NMR Companion contributors"
   },
@@ -12,7 +12,7 @@
   "interface": {
     "displayName": "NMR Companion",
     "shortDescription": "Shared NMR projects for people and agents.",
-    "longDescription": "Developer alpha: qualified 1D imports, signed integration, internal-standard yield, T1/T2 analysis, revision history and local exports. Installed-host and full laboratory acceptance are pending.",
+    "longDescription": "Prerelease: shared GUI/MCP projects, qualified 1D and processed COSY/HSQC imports, structures and evidence, yield/recovery, explicit conditions, T1/T2 fits and revision-bound exports. Instrument, model and host qualification is recorded separately.",
     "developerName": "NMR Companion contributors",
     "category": "Productivity",
     "brandColor": "#147D83",

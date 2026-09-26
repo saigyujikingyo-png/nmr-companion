@@ -1,20 +1,20 @@
 from __future__ import annotations
 
-from typing import Annotated, Literal
-import numpy as np
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
-
+from typing import Literal
+from pydantic import Field, JsonValue, model_validator
+from .domain import Model, Number, Positive, NonNegative, Name, Identifier, Vector
 from .errors import NmrError
-
-Number = Annotated[float, Field(allow_inf_nan=False, strict=True)]
-Positive = Annotated[float, Field(gt=0, allow_inf_nan=False, strict=True)]
-Name = Annotated[str, Field(min_length=1, max_length=200)]
-Identifier = Annotated[str, Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_-]+$")]
-Vector = Annotated[list[Number], Field(min_length=2, max_length=262144)]
-
-
-class Model(BaseModel):
-    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+from .evidence_models import (
+    Sample,
+    Structure,
+    Crosspeak,
+    Peaklabel,
+    Attachment,
+    Annotation,
+    NormalizationResult,
+    ComparisonResult,
+    DeptResult,
+)
 
 
 class Source(Model):
@@ -44,8 +44,10 @@ class Spectrum(Model):
             self.imag is not None and len(self.imag) != len(self.real)
         ):
             raise ValueError("axis and signal lengths must match")
-        diff = np.diff(self.axis)
-        if not (np.all(diff > 0) or np.all(diff < 0)):
+        if not (
+            all(a < b for a, b in zip(self.axis, self.axis[1:]))
+            or all(a > b for a, b in zip(self.axis, self.axis[1:]))
+        ):
             raise ValueError("axis must be strictly monotonic")
         if (self.domain, self.axis_unit) not in [("frequency", "ppm"), ("time", "s")]:
             raise ValueError("domain and axis unit disagree")
@@ -70,8 +72,10 @@ class Grid(Model):
         if len(self.z) != len(self.y) or any(len(row) != len(self.x) for row in self.z):
             raise ValueError("z rows correspond to y; columns correspond to x")
         for axis in (self.x, self.y):
-            diff = np.diff(axis)
-            if not (np.all(diff > 0) or np.all(diff < 0)):
+            if not (
+                all(a < b for a, b in zip(axis, axis[1:]))
+                or all(a > b for a, b in zip(axis, axis[1:]))
+            ):
                 raise ValueError("grid axes must be strictly monotonic")
         return self
 
@@ -101,7 +105,7 @@ class Analysis(Model):
     id: Identifier
     version: int = 1
     name: Name
-    kind: Literal["yield", "relaxation", "peaks"]
+    kind: Literal["yield", "relaxation", "peaks", "normalization", "comparison", "dept"]
     state: Literal["current", "stale"] = "current"
     source_versions: dict[str, int]
     parameters: dict[str, JsonValue]
@@ -121,6 +125,9 @@ class Assignment(Model):
     sample: Name
     atom: Name
     candidate: Name
+    sample_id: Identifier | None = None
+    candidate_id: Identifier | None = None
+    atom_ids: list[Identifier] = Field(default_factory=list, max_length=256)
     observation: str = Field(min_length=1, max_length=4000)
     evidence_ids: list[Identifier] = Field(min_length=1, max_length=64)
     source_versions: dict[str, int]
@@ -129,7 +136,7 @@ class Assignment(Model):
 
 
 class Project(Model):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 2
     id: Identifier
     name: Name
     revision: int = Field(ge=0)
@@ -140,6 +147,12 @@ class Project(Model):
     integrals: dict[str, Integral] = Field(default_factory=dict)
     analyses: dict[str, Analysis] = Field(default_factory=dict)
     assignments: dict[str, Assignment] = Field(default_factory=dict)
+    samples: dict[str, Sample] = Field(default_factory=dict)
+    structures: dict[str, Structure] = Field(default_factory=dict)
+    crosspeaks: dict[str, Crosspeak] = Field(default_factory=dict)
+    peaklabels: dict[str, Peaklabel] = Field(default_factory=dict)
+    attachments: dict[str, Attachment] = Field(default_factory=dict)
+    annotations: dict[str, Annotation] = Field(default_factory=dict)
 
     def object(self, object_id: str):
         for collection in (
@@ -149,6 +162,12 @@ class Project(Model):
             self.integrals,
             self.analyses,
             self.assignments,
+            self.samples,
+            self.structures,
+            self.crosspeaks,
+            self.peaklabels,
+            self.attachments,
+            self.annotations,
         ):
             if object_id in collection:
                 return collection[object_id]
@@ -197,6 +216,12 @@ class YieldResult(Model):
     yield_percent: Positive
     method: str
     assumptions: list[str]
+    recovered_percent: Positive | None = None
+    mass_balance_percent: Positive | None = None
+    u_yield_percent: NonNegative | None = None
+    u_recovered_percent: NonNegative | None = None
+    u_mass_balance_percent: NonNegative | None = None
+    uncertainty_method: str = "unavailable: input uncertainties not supplied"
 
 
 class TraceMapping(Model):
@@ -248,4 +273,11 @@ class RelaxationResult(Model):
         return self
 
 
-SCIENTIFIC_RESULTS = {"peaks": PeakResult, "yield": YieldResult, "relaxation": RelaxationResult}
+SCIENTIFIC_RESULTS = {
+    "peaks": PeakResult,
+    "yield": YieldResult,
+    "relaxation": RelaxationResult,
+    "normalization": NormalizationResult,
+    "comparison": ComparisonResult,
+    "dept": DeptResult,
+}

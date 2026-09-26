@@ -1,1 +1,4 @@
 * text=auto eol=lf
+
+# Byte-exact upstream notices are verified against their recorded hashes.
+packaging/windows/resources/THIRD-PARTY-RUNTIME-NOTICES/*.txt -text
