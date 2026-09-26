@@ -99,6 +99,7 @@ async function act(fn) {
     busy = false;
     document.querySelectorAll("button").forEach((b) => (b.disabled = false));
     syncPlotTools();
+    globalThis.NMRBatch?.sync();
   }
 }
 async function edit(command) {
@@ -119,10 +120,15 @@ async function edit(command) {
 }
 function options(select, items, { blank = false } = {}) {
   const old = select.value;
+  const selectedValues = new Set([...select.selectedOptions].map((option) => option.value));
   select.replaceChildren();
   if (blank) select.add(new Option("Select…", ""));
-  for (const [id, label] of items) select.add(new Option(label, id));
-  if ([...select.options].some((o) => o.value === old)) select.value = old;
+  for (const [id, label] of items) {
+    const option = new Option(label, id);
+    if (select.multiple) option.selected = selectedValues.has(id);
+    select.add(option);
+  }
+  if (!select.multiple && [...select.options].some((o) => o.value === old)) select.value = old;
 }
 function active() {
   if (!project || !project.spectra[selected]) throw Error("Select a spectrum.");
@@ -181,14 +187,15 @@ function render() {
   );
   renderTable();
   const evidence = [];
-  for (const key of ["spectra", "grids", "integrals", "analyses"])
+  for (const key of ["spectra", "grids", "integrals", "analyses", "crosspeaks", "peaklabels", "attachments", "annotations", "structures"])
     for (const item of Object.values(project?.[key] || {}))
       evidence.push([
         item.id,
-        (item.name || item.id) + (item.state === "stale" ? " [stale]" : ""),
+        (item.name || item.label || item.id) + (item.state === "stale" ? " [stale]" : ""),
       ]);
   options($("evidenceIds"), evidence);
   $("undoRevision").max = Math.max(0, (project?.revision || 1) - 1);
+  globalThis.NMRBatch?.render();
 }
 function renderLibrary() {
   const spectra = Object.values(project?.spectra || {});
@@ -395,6 +402,7 @@ function drawSpectrum() {
         fmt(view.gain, 3) +
         "× display";
   }
+  if (geometry) globalThis.NMRBatch?.drawPeakLabels($("spectrumPlot"), geometry, selected);
   syncPlotTools();
 }
 function scheduleDraw() {
@@ -476,11 +484,17 @@ function switchWorkflow(name) {
     processing: "Spectrum processing",
     evidence: "Evidence & assignments",
     advanced: "Advanced operations",
+    samples: "Samples & conditions",
+    correlations: "Processed 2D correlations",
+    structures: "Structure candidates",
+    references: "Reference evidence",
+    comparison: "Compare conditions",
   }[name];
   $("regionToolLabel").textContent =
     name === "relaxation" ? "Fit region" : "Integrate";
   setPlotMode(plotMode);
   syncDraftStatus();
+  globalThis.NMRBatch?.workflow(name);
   scheduleDraw();
 }
 function eventAxis(e, limits = currentView()?.range) {
@@ -697,7 +711,7 @@ function renderAnalyses() {
       const wrap = node("div", undefined, "table-wrap");
       wrap.append(table(["Time / s", "Area", "Predicted", "Residual"], rows));
       card.append(wrap);
-    } else
+    } else if (a.kind === "peaks")
       card.append(
         node(
           "p",
@@ -705,6 +719,7 @@ function renderAnalyses() {
           "result-value",
         ),
       );
+    globalThis.NMRBatch?.appendAnalysis(a, card);
     for (const warning of r.warnings || [])
       card.append(node("p", warning, "warning"));
     for (const assumption of r.assumptions || [])
@@ -751,6 +766,7 @@ function loadAnalysisSettings(analysis) {
       stoichiometry: "stoichiometric_factor",
     };
     for (const [id, key] of Object.entries(ids)) $(id).value = c[key];
+    globalThis.NMRBatch?.loadYield(c);
     document.querySelector('[data-tab="organic"]').click();
   } else {
     $("delayTable").value = c.table_id;
@@ -786,6 +802,7 @@ function renderAssignments() {
       node("p", a.observation),
       node("span", a.status + " / " + a.state, "pill"),
     );
+    globalThis.NMRBatch?.assignmentInfo(a, card);
     const editButton = node("button", "Revise"),
       remove = node("button", "Remove");
     editButton.onclick = () => {
@@ -793,6 +810,7 @@ function renderAssignments() {
       for (const key of ["sample", "atom", "candidate", "observation"])
         $(key).value = a[key];
       $("assignmentStatus").value = a.status;
+      globalThis.NMRBatch?.loadAssignment(a);
       for (const option of $("evidenceIds").options)
         option.selected = a.evidence_ids.includes(option.value);
     };
@@ -986,6 +1004,7 @@ document.addEventListener("keydown", (e) => {
     e.metaKey ||
     e.altKey ||
     busy ||
+    globalThis.NMRBatch?.isBatch ||
     e.target.closest("input,select,textarea,[contenteditable=true]")
   )
     return;
@@ -1016,7 +1035,7 @@ form("createForm", async () => {
   await tool("nmr_project", { action: "create", name: $("newName").value });
   await refresh();
 });
-form("importForm", () => edit({ op: "import", path: $("importPath").value }));
+form("importForm", () => edit({ op: "import", path: $("importPath").value, ...(globalThis.NMRBatch?.importCommand() || {}) }));
 $("demo").onclick = () =>
   act(async () => {
     await edit({ op: "demo" });
@@ -1065,6 +1084,7 @@ form("yieldForm", () =>
     standard_mol: value("standardMol"),
     limiting_mol: value("limitingMol"),
     stoichiometric_factor: value("stoichiometry"),
+    ...(globalThis.NMRBatch?.yieldCommand() || {}),
   }),
 );
 form("fitForm", async () => {
@@ -1127,6 +1147,7 @@ form("assignmentForm", async () => {
     observation: $("observation").value,
     evidence_ids: [...$("evidenceIds").selectedOptions].map((o) => o.value),
     status: $("assignmentStatus").value,
+    ...(globalThis.NMRBatch?.assignmentCommand() || {}),
   });
   $("assignmentId").value = "";
 });
@@ -1172,6 +1193,25 @@ $("export").onclick = () =>
     out.append(button);
     out.scrollIntoView({ block: "nearest", behavior: "smooth" });
   });
+globalThis.NMRWorkbench = {
+  get project() { return project; },
+  get activeSpectrumId() { return selected; },
+  get busy() { return busy; },
+  node, fmt, act, edit, notice, switchWorkflow, renderProject: render,
+  async closeWorkbench() {
+    const response = await fetch("/api/quit", { method: "POST", headers });
+    if (!response.ok) throw Error("The workbench did not confirm the close request.");
+    return response.json();
+  },
+  async privateBlob(path) {
+    const response = await fetch(path, { headers });
+    if (!response.ok) {
+      const problem = await response.json().catch(() => ({}));
+      throw Error(problem.error?.message || "The preserved source could not be read.");
+    }
+    return response.blob();
+  },
+};
 window.addEventListener("resize", scheduleDraw);
 new ResizeObserver(scheduleDraw).observe($("spectrumPlot"));
 document.fonts.ready.then(scheduleDraw);

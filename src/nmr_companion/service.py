@@ -30,7 +30,12 @@ class Service:
         pending = set(changed)
         while pending:
             next_ids = set()
-            for item in [*project.analyses.values(), *project.assignments.values()]:
+            from .evidence_models import DERIVED_COLLECTIONS
+
+            derived = [*project.analyses.values(), *project.assignments.values()]
+            for collection in DERIVED_COLLECTIONS:
+                derived.extend(getattr(project, collection).values())
+            for item in derived:
                 if item.state == "current" and pending.intersection(item.source_versions):
                     item.state = "stale"
                     item.version += 1
@@ -40,6 +45,23 @@ class Service:
     def apply(self, expected_revision: int, request_id: str, command: dict):
         try:
             command = COMMAND.validate_python(command).model_dump(mode="json")
+            # Preserve fingerprints of legacy commands when all additive fields are absent.
+            additions = {
+                "import": ("bruker_processing_numbers",),
+                "assign": ("sample_id", "candidate_id", "atom_ids"),
+                "yield": (
+                    "recovered_integral_id",
+                    "recovered_protons",
+                    "u_product_area",
+                    "u_standard_area",
+                    "u_recovered_area",
+                    "u_standard_mol",
+                    "u_limiting_mol",
+                ),
+            }
+            for key in additions.get(command["op"], ()):
+                if command.get(key) is None or command.get(key) == []:
+                    command.pop(key, None)
             if (
                 not isinstance(expected_revision, int)
                 or isinstance(expected_revision, bool)
@@ -66,10 +88,20 @@ class Service:
 
     def _execute(self, p, db, c):
         op = c["op"]
+        from .evidence import execute
+
+        extended = execute(self, p, db, c)
+        if extended is not None:
+            return extended
         if op == "import":
             from .formats import load_input
 
-            bundle = load_input(c["path"])
+            options = (
+                {"bruker_processing_numbers": c["bruker_processing_numbers"]}
+                if c.get("bruker_processing_numbers") is not None
+                else {}
+            )
+            bundle = load_input(c["path"], **options)
             sources = {}
             for original in bundle["originals"]:
                 name = original["name"].replace("\\", "/")
@@ -98,7 +130,18 @@ class Service:
                         raise NmrError(
                             "SOURCE_BINDING", "Imported object has no matching original source."
                         )
+                    explicit_sources = data.pop("source_names", None)
                     dependencies = [name]
+                    if explicit_sources is not None:
+                        for dependency in explicit_sources:
+                            dependency = dependency.replace("\\", "/")
+                            if dependency not in sources and "members/" + dependency in sources:
+                                dependency = "members/" + dependency
+                            if dependency not in sources:
+                                raise NmrError(
+                                    "SOURCE_BINDING", "A processed data dependency is missing."
+                                )
+                            dependencies.append(dependency)
                     source_path = PurePosixPath(name)
                     if data.get("metadata", {}).get("format") == "bruker":
                         if source_path.name == "fid":
@@ -273,7 +316,21 @@ class Service:
                 c["limiting_mol"],
                 c["stoichiometric_factor"],
             )
-            return self._analysis(p, "yield", c["name"], [a.id, b.id], c, result), []
+            from .evidence import extend_yield
+            from .models import YieldResult
+
+            try:
+                canonical_json(result)
+                YieldResult.model_validate(result)
+            except (ValueError, TypeError) as exc:
+                raise NmrError(
+                    "OUTPUT_VALIDATION", "Yield backend returned an invalid scientific result."
+                ) from exc
+
+            extra_sources = extend_yield(p, c, result, a, b)
+            return self._analysis(
+                p, "yield", c["name"], [a.id, b.id, *extra_sources], c, result
+            ), []
         if op == "fit":
             table = p.tables.get(c["table_id"])
             if table is None:
@@ -349,18 +406,43 @@ class Service:
                 p, "relaxation", c["name"], [table.id, *c["spectrum_ids"]], c, result
             ), result.get("warnings", [])
         if op == "assign":
-            sources = {oid: p.object(oid).version for oid in c["evidence_ids"]}
+            from .evidence import versions, cycle, require
+
+            evidence = list(c["evidence_ids"])
+            if c.get("sample_id"):
+                require(p.samples, c["sample_id"], "Sample")
+                evidence.append(c["sample_id"])
+            if c.get("candidate_id"):
+                candidate = require(p.structures, c["candidate_id"], "Candidate structure")
+                if c.get("sample_id") != candidate.sample_id:
+                    raise NmrError(
+                        "ASSIGNMENT_SAMPLE",
+                        "Candidate and assignment must refer to the same explicit sample.",
+                    )
+                if not set(c.get("atom_ids", [])).issubset({a.id for a in candidate.atoms}):
+                    raise NmrError(
+                        "ASSIGNMENT_ATOM", "Assignment atoms must exist in the selected structure."
+                    )
+                evidence.append(candidate.id)
+            elif c.get("atom_ids"):
+                raise NmrError(
+                    "ASSIGNMENT_ATOM", "Atom identities require a selected candidate structure."
+                )
+            sources = versions(p, evidence)
             old = p.assignments.get(c["assignment_id"]) if c["assignment_id"] else None
             if c["assignment_id"] and old is None:
                 raise NmrError("NOT_FOUND", "Assignment does not exist.")
-            if old and old.id in sources:
-                raise NmrError("SELF_REFERENCE", "Assignment cannot cite itself.")
+            if old:
+                cycle(p, old.id, sources)
             if any(getattr(p.object(oid), "state", "current") == "stale" for oid in sources):
                 raise NmrError("STALE_EVIDENCE", "Refresh stale evidence before using it.")
             a = Assignment(
                 id=old.id if old else identifier("assignment"),
                 version=old.version + 1 if old else 1,
                 source_versions=sources,
+                sample_id=c.get("sample_id"),
+                candidate_id=c.get("candidate_id"),
+                atom_ids=c.get("atom_ids", []),
                 **{
                     key: c[key]
                     for key in (
@@ -381,7 +463,15 @@ class Service:
             p.object(oid)
             # Preserve acquired spectra, matrices and tables. Derived annotations are removable.
             found = False
-            for collection in (p.integrals, p.analyses, p.assignments):
+            for collection in (
+                p.integrals,
+                p.analyses,
+                p.assignments,
+                p.structures,
+                p.crosspeaks,
+                p.peaklabels,
+                p.annotations,
+            ):
                 if oid in collection:
                     del collection[oid]
                     found = True
@@ -444,8 +534,6 @@ class Service:
         return [obj.id]
 
     def export(self, revision: int) -> Artifact:
-        from .render import spectrum_svg
-
         with self.store.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             p = self.store.read_from(db, revision)
@@ -472,15 +560,22 @@ class Service:
                 for s in p.spectra.values():
                     buffer = StringIO(newline="")
                     writer = csv.writer(buffer)
-                    writer.writerow([s.axis_unit, "real", "imag"])
+                    writer.writerow([s.axis_unit, "real", "imag", "revision", "spectrum_id"])
                     for i, x in enumerate(s.axis):
-                        writer.writerow([x, s.real[i], s.imag[i] if s.imag is not None else ""])
+                        writer.writerow(
+                            [
+                                x,
+                                s.real[i],
+                                s.imag[i] if s.imag is not None else "",
+                                p.revision,
+                                s.id,
+                            ]
+                        )
                     add(archive, f"spectra/{s.id}.csv", buffer.getvalue())
-                    add(
-                        archive,
-                        f"figures/{s.id}.svg",
-                        spectrum_svg(s, list(p.integrals.values()), p.revision),
-                    )
+                from .exporting import export_entries
+
+                for entry_name, entry_data in export_entries(p, db).items():
+                    add(archive, entry_name, entry_data)
                 add(
                     archive,
                     "manifest.json",
@@ -543,7 +638,7 @@ class Service:
                 if row is None or hashlib.sha256(row[0]).hexdigest() != digest:
                     raise NmrError("SOURCE_INTEGRITY", "An original source is missing or corrupt.")
                 snapshot.execute("INSERT INTO originals VALUES(?,?)", (digest, row[0]))
-            snapshot.execute("PRAGMA user_version=1")
+            snapshot.execute("PRAGMA user_version=2")
             snapshot.commit()
             return snapshot.serialize()
         finally:

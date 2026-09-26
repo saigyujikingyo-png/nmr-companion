@@ -19,6 +19,12 @@ class Summary(Model):
     integrals: int
     analyses: int
     assignments: int
+    samples: int = 0
+    structures: int = 0
+    crosspeaks: int = 0
+    peaklabels: int = 0
+    attachments: int = 0
+    annotations: int = 0
     objects: list[dict[str, str | int]]
 
 
@@ -43,6 +49,11 @@ class RequestInput(Model):
 
 class ExportInput(Model):
     revision: int = Field(ge=0)
+    destination: str | None = Field(default=None, min_length=1, max_length=4096)
+
+
+class ExportView(Artifact):
+    local_path: str | None = None
 
 
 class HelpInput(Model):
@@ -51,7 +62,20 @@ class HelpInput(Model):
 
 class ObjectView(Model):
     object_id: Identifier
-    object_type: Literal["spectrum", "grid", "table", "integral", "analysis", "assignment"]
+    object_type: Literal[
+        "spectrum",
+        "grid",
+        "table",
+        "integral",
+        "analysis",
+        "assignment",
+        "sample",
+        "structure",
+        "crosspeak",
+        "peaklabel",
+        "attachment",
+        "annotation",
+    ]
     version: int
     # Validated against the underlying project model before serialization.
     # Spectrum/grid arrays are omitted: scientific operations use full arrays in the service.
@@ -108,8 +132,8 @@ SPECS = {
     ),
     "nmr_export": (
         ExportInput,
-        Reply[Artifact],
-        "Generate an immutable ZIP for one revision with originals, editable state, CSV spectra and SVG figures.",
+        Reply[ExportView],
+        "Generate a revision ZIP with originals, editable state, CSV and SVG/PNG figures. An optional absolute destination saves a new .zip file without overwriting; return its local_path as a host file link.",
     ),
     "nmr_help": (
         HelpInput,
@@ -121,7 +145,20 @@ SPECS = {
 
 def summary(project):
     objects = []
-    for kind in ("spectra", "grids", "tables", "integrals", "analyses", "assignments"):
+    for kind in (
+        "spectra",
+        "grids",
+        "tables",
+        "integrals",
+        "analyses",
+        "assignments",
+        "samples",
+        "structures",
+        "crosspeaks",
+        "peaklabels",
+        "attachments",
+        "annotations",
+    ):
         for obj in getattr(project, kind).values():
             objects.append(
                 {
@@ -138,7 +175,20 @@ def summary(project):
         objects=objects,
         **{
             k: len(getattr(project, k))
-            for k in ("spectra", "grids", "tables", "integrals", "analyses", "assignments")
+            for k in (
+                "spectra",
+                "grids",
+                "tables",
+                "integrals",
+                "analyses",
+                "assignments",
+                "samples",
+                "structures",
+                "crosspeaks",
+                "peaklabels",
+                "attachments",
+                "annotations",
+            )
         },
     )
 
@@ -161,7 +211,13 @@ def dispatch(service: Service, name: str, arguments: dict):
         elif name == "nmr_request":
             data = service.store.request(args.request_id)
         elif name == "nmr_export":
-            data = service.export(args.revision)
+            if args.destination is None:
+                data = ExportView(**service.export(args.revision).model_dump())
+            else:
+                from .delivery import export_file
+
+                artifact, path = export_file(service, args.revision, args.destination)
+                data = ExportView(**artifact.model_dump(), local_path=str(path))
         elif name == "nmr_help":
             if args.operation is not None and args.operation not in OPERATIONS:
                 raise NmrError("UNKNOWN_OPERATION", "Select an operation listed in nmr_help.")
@@ -173,9 +229,16 @@ def dispatch(service: Service, name: str, arguments: dict):
                 else None,
                 result_schema=Receipt.model_json_schema(),
                 scientific_result_schema=SCIENTIFIC_RESULTS[
-                    {"fit": "relaxation", "yield": "yield", "peaks": "peaks"}[args.operation]
+                    {
+                        "fit": "relaxation",
+                        "yield": "yield",
+                        "peaks": "peaks",
+                        "normalize": "normalization",
+                        "compare": "comparison",
+                        "dept": "dept",
+                    }[args.operation]
                 ].model_json_schema()
-                if args.operation in {"fit", "yield", "peaks"}
+                if args.operation in {"fit", "yield", "peaks", "normalize", "compare", "dept"}
                 else None,
                 notes=[
                     "Mutation result is a durable receipt; read its object IDs for scientific results.",
@@ -204,6 +267,16 @@ def dispatch(service: Service, name: str, arguments: dict):
             if kind == "table":
                 body["total_rows"] = len(body["rows"])
                 body["rows"] = body["rows"][:64]
+            if kind == "analysis":
+                truncated = {}
+                for key in ("peaks", "rows", "integrals"):
+                    values = body["result"].get(key)
+                    if isinstance(values, list) and len(values) > 64:
+                        truncated[key] = {"total": len(values), "returned": 64}
+                        body["result"][key] = values[:64]
+                if truncated:
+                    body["result_truncation"] = truncated
+                    body["full_data"] = "Export this revision for complete scientific tables."
             data = ObjectView(object_id=obj.id, object_type=kind, version=obj.version, data=body)
         reply = output_model(ok=True, data=data)
     except (NmrError, ValidationError) as exc:

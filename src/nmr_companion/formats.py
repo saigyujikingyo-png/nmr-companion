@@ -1,13 +1,14 @@
 """Bounded local readers preserving original bytes and processing stage.
 
 Qualified: numeric single-block 1D JCAMP, CSV/TSV, complex Bruker 1D FID,
-full-width Bruker 1D processed data, and a safe ZIP wrapper.
+full-width Bruker 1D/2D processed data, explicit processed-2D JSON, and a safe ZIP wrapper.
 """
 
 from __future__ import annotations
 
 import csv
 import io
+import json
 import math
 import os
 from pathlib import Path, PurePosixPath
@@ -28,6 +29,7 @@ MAX_TOTAL_BYTES = 128 * 1024 * 1024
 MAX_FILES = 1024
 MAX_TRACES = 64
 MAX_POINTS = 262144
+MAX_GRID_CELLS = 1000000
 MAX_ARCHIVE_RATIO = 200
 _MAX_DEPTH = 16
 _NUMBER = re.compile(r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[Ee][+-]?\d+)?")
@@ -256,6 +258,138 @@ def _spectrum(name, axis, real, imag, domain, nucleus, metadata) -> dict:
         "nucleus": nucleus,
         "metadata": metadata,
     }
+
+
+def _grid(name, x, y, z, nuclei, metadata, source_names) -> dict:
+    axes = [np.asarray(axis, dtype=np.float64) for axis in (x, y)]
+    if any(axis.ndim != 1 or not 2 <= axis.size <= MAX_POINTS for axis in axes):
+        _fail("INVALID_DATA", "Grid axes need 2 to 262144 points each.")
+    if axes[0].size * axes[1].size > MAX_GRID_CELLS:
+        _fail("INPUT_LIMIT", "A processed grid exceeds one million cells.")
+    if len(z) != axes[1].size or any(len(row) != axes[0].size for row in z):
+        _fail("INVALID_DATA", "Grid rows must match y; grid columns must match x.")
+    values = np.asarray(z, dtype=np.float64)
+    if values.ndim != 2 or not np.isfinite(values).all():
+        _fail("INVALID_DATA", "A processed grid must contain finite numeric values.")
+    for axis in axes:
+        if not np.isfinite(axis).all() or not (
+            np.all(axis[1:] > axis[:-1]) or np.all(axis[1:] < axis[:-1])
+        ):
+            _fail("INVALID_DATA", "Grid ppm axes must be finite and strictly monotonic.")
+    if len(nuclei) != 2 or any(_nucleus(nucleus) is None for nucleus in nuclei):
+        _fail("INVALID_METADATA", "Each grid axis requires an explicit isotope nucleus.")
+    return {
+        "name": name,
+        "x": axes[0].tolist(),
+        "y": axes[1].tolist(),
+        "z": values.tolist(),
+        "nuclei": nuclei,
+        "metadata": metadata,
+        "source_names": source_names,
+    }
+
+
+def _experiment_nuclei(experiment: str, nuclei: list[str]) -> None:
+    if experiment == "COSY" and nuclei != ["1H", "1H"]:
+        _fail("INVALID_METADATA", "The qualified COSY profile requires explicit 1H/1H axes.")
+    if experiment == "HSQC" and set(nuclei) not in ({"1H", "13C"}, {"1H", "15N"}):
+        _fail("INVALID_METADATA", "HSQC requires one 1H axis and one 13C or 15N axis.")
+
+
+def _processed_json_candidate(name: str, data: bytes, only_file: bool) -> bool:
+    if only_file or name.lower().endswith(".nmr2d.json"):
+        return True
+    # Preserve old imports containing unrelated JSON sidecars. The dedicated
+    # suffix opts into strict parsing even for malformed content in a bundle.
+    try:
+        pairs = json.loads(_text(data), object_pairs_hook=tuple)
+    except (NmrError, ValueError, RecursionError):
+        return False
+    # Retain duplicate format fields during discovery so a conflicting marker
+    # cannot conceal a malformed grid; the strict reader rejects duplicates.
+    return isinstance(pairs, tuple) and any(
+        key == "format" and value == "nmr-companion-processed-2d" for key, value in pairs
+    )
+
+
+def _processed_json(name: str, data: bytes) -> dict:
+    def unique_fields(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                _fail("INVALID_FORMAT", "Processed-2D JSON contains a duplicate field.")
+            result[key] = value
+        return result
+
+    def nonfinite_constant(_):
+        _fail("INVALID_DATA", "Processed-2D JSON must not contain NaN or Infinity.")
+
+    try:
+        payload = json.loads(
+            _text(data), object_pairs_hook=unique_fields, parse_constant=nonfinite_constant
+        )
+    except NmrError:
+        raise
+    except (ValueError, RecursionError) as exc:
+        raise NmrError(
+            "INVALID_FORMAT", "Processed-2D JSON is malformed or too deeply nested."
+        ) from exc
+    if not isinstance(payload, dict) or payload.get("format") != "nmr-companion-processed-2d":
+        _fail("UNSUPPORTED_FORMAT", "JSON requires the nmr-companion-processed-2d format marker.")
+    if type(payload.get("schema_version")) is not int or payload["schema_version"] != 1:
+        _fail("UNSUPPORTED_FORMAT", "Processed-2D JSON requires schema_version 1.")
+    required = {"format", "schema_version", "experiment", "x", "y", "z"}
+    if not required <= payload.keys() or payload.keys() - required - {"name"}:
+        _fail("INVALID_FORMAT", "Processed-2D JSON has missing or unsupported fields.")
+    experiment = payload["experiment"]
+    if not isinstance(experiment, str) or experiment not in {"COSY", "HSQC"}:
+        _fail("INVALID_METADATA", "Processed-2D JSON requires explicit experiment COSY or HSQC.")
+    title = payload.get("name", name)
+    if not isinstance(title, str) or not 1 <= len(title) <= 200 or any(ord(c) < 32 for c in title):
+        _fail("INVALID_METADATA", "A processed-2D name needs 1 to 200 printable characters.")
+    axes = []
+    nuclei = []
+    for key in ("x", "y"):
+        axis = payload[key]
+        if not isinstance(axis, dict) or set(axis) != {"unit", "nucleus", "values"}:
+            _fail("INVALID_METADATA", "Each JSON axis requires unit, nucleus and values only.")
+        if axis["unit"] != "ppm" or axis["nucleus"] not in ("1H", "13C", "15N"):
+            _fail(
+                "INVALID_METADATA", "Each JSON axis requires ppm and an explicit supported nucleus."
+            )
+        values = axis["values"]
+        if not isinstance(values, list) or not 2 <= len(values) <= MAX_POINTS:
+            _fail("INVALID_DATA", "JSON grid axes need 2 to 262144 numeric points each.")
+        if any(type(value) not in (int, float) for value in values):
+            _fail("INVALID_DATA", "JSON axis values must be numbers, without strings or booleans.")
+        axes.append(values)
+        nuclei.append(axis["nucleus"])
+    _experiment_nuclei(experiment, nuclei)
+    if len(axes[0]) * len(axes[1]) > MAX_GRID_CELLS:
+        _fail("INPUT_LIMIT", "A processed grid exceeds one million cells.")
+    values = payload["z"]
+    if not isinstance(values, list) or len(values) != len(axes[1]):
+        _fail("INVALID_DATA", "JSON grid rows must match the declared y axis.")
+    if any(not isinstance(row, list) or len(row) != len(axes[0]) for row in values):
+        _fail("INVALID_DATA", "JSON grid columns must match the declared x axis.")
+    if any(type(value) not in (int, float) for row in values for value in row):
+        _fail("INVALID_DATA", "JSON grid cells must be numbers, without strings or booleans.")
+    metadata = {
+        "format": "nmr-companion-processed-2d",
+        "schema_version": 1,
+        "reader": "nmr_companion.formats.processed_json_v1",
+        "source_name": name,
+        "stage": "processed_spectrum",
+        "experiment": experiment,
+        "experiment_source": "explicit_json_label",
+        "axis_order": {"x": "explicit_x", "y": "explicit_y", "z": "rows_y_columns_x"},
+        "axis_units": ["ppm", "ppm"],
+        "fft_applied_on_import": False,
+        "scale_applied": "none; declared numeric intensities",
+        "signed_values_preserved": True,
+        "complex_processing_ready": False,
+    }
+    return _grid(title, *axes, values, nuclei, metadata, [name])
 
 
 def _numbers(line: str) -> list[float]:
@@ -645,18 +779,229 @@ def _bruker_processed(name: str, files: dict[str, bytes], temp: Path) -> dict:
     return _spectrum(name, axis, real, imag, "frequency", nucleus, metadata)
 
 
-def _interpret(files: dict[str, bytes]) -> dict:
+def _bruker_processed_2d(name: str, files: dict[str, bytes], temp: Path) -> dict:
+    directory = PurePosixPath(name).parent
+    prefix = "" if str(directory) == "." else str(directory) + "/"
+    parameter_names = [prefix + "procs", prefix + "proc2s"]
+    if any(param_name not in files for param_name in parameter_names):
+        _fail("UNSUPPORTED_FORMAT", "Bruker 2rr requires sibling procs and proc2s files.")
+    if any(prefix + f"proc{i}s" in files for i in (3, 4)):
+        _fail("UNSUPPORTED_FORMAT", "Processed Bruker data above two dimensions is not qualified.")
+    fields = {"SI", "SF", "SW_p", "OFFSET", "XDIM", "AXNUC", "STSI", "STSR"}
+    direct = _parameters(files[parameter_names[0]], fields | {"BYTORDP", "DTYPP", "NC_proc"})
+    indirect = _parameters(files[parameter_names[1]], fields)
+    dependencies = [name, *parameter_names]
+    # Only conventional experiment/pdata/procno or a deliberately flattened
+    # export can bind acquisition metadata to these processing parameters.
+    acquisition_root = directory.parent.parent if directory.parent.name == "pdata" else None
+    if str(directory) == ".":
+        acquisition_root = directory
+    acquisition = []
+    for leaf in ("acqus", "acqu2s"):
+        acq_name = str(acquisition_root / leaf) if acquisition_root is not None else None
+        if acq_name in files:
+            acquisition.append(_parameters(files[acq_name], {"NUC1", "EXP"}))
+            dependencies.append(acq_name)
+        else:
+            acquisition.append({})
+    axes = []
+    counts = []
+    blocks = []
+    nuclei = []
+    axis_metadata = {}
+    for key, param_name, p, a in zip(
+        ("x", "y"), parameter_names, (direct, indirect), acquisition, strict=True
+    ):
+        count = _integer(p.get("SI"), "SI", 2, MAX_POINTS)
+        block = _integer(p.get("XDIM"), "XDIM", 1, count)
+        if count % block:
+            _fail(
+                "UNSUPPORTED_FORMAT",
+                "Qualified Bruker 2D requires SI divisible by XDIM on each axis.",
+            )
+        if ("STSR" in p and _integer(p["STSR"], "STSR", 0, MAX_POINTS) != 0) or (
+            "STSI" in p and _integer(p["STSI"], "STSI", 0, MAX_POINTS) not in (0, count)
+        ):
+            _fail("UNSUPPORTED_FORMAT", "Cropped Bruker processed axes are not qualified.")
+        obs = _float(p.get("SF"), "SF", positive=True)
+        sw = _float(p.get("SW_p"), "SW_p", positive=True)
+        offset = _float(p.get("OFFSET"), "OFFSET")
+        nucleus = _nucleus(p.get("AXNUC"))
+        acquired_nucleus = _nucleus(a.get("NUC1"))
+        if ("AXNUC" in p and nucleus is None) or ("NUC1" in a and acquired_nucleus is None):
+            _fail("INVALID_METADATA", "A Bruker 2D axis has an invalid declared nucleus.")
+        if nucleus is not None and acquired_nucleus is not None and nucleus != acquired_nucleus:
+            _fail("INVALID_METADATA", "Bruker processing and acquisition nuclei disagree.")
+        nucleus_field = "AXNUC" if nucleus is not None else "NUC1"
+        nucleus = nucleus or acquired_nucleus
+        if nucleus is None:
+            _fail(
+                "INVALID_METADATA",
+                "Each Bruker 2D axis requires AXNUC or matching acquisition NUC1.",
+            )
+        with np.errstate(over="ignore", invalid="ignore"):
+            axes.append(offset - np.arange(count) * (sw / count / obs))
+        counts.append(count)
+        blocks.append(block)
+        nuclei.append(nucleus)
+        axis_metadata[key] = {
+            "processing_file": PurePosixPath(param_name).name,
+            "nucleus_field": nucleus_field,
+            "SI": count,
+            "XDIM": block,
+            "SF_mhz": obs,
+            "SW_p_hz": sw,
+            "OFFSET_ppm": offset,
+        }
+    if counts[0] * counts[1] > MAX_GRID_CELLS:
+        _fail("INPUT_LIMIT", "A processed grid exceeds one million cells.")
+    endian = _integer(direct.get("BYTORDP"), "BYTORDP", 0, 1)
+    dtype = _integer(direct.get("DTYPP"), "DTYPP", 0, 2)
+    if dtype not in (0, 2):
+        _fail("UNSUPPORTED_FORMAT", "Only int32 and float64 processed Bruker data are supported.")
+    exponent = _integer(direct.get("NC_proc"), "NC_proc", -256, 256)
+    expected = counts[0] * counts[1] * (8 if dtype == 2 else 4)
+    if len(files[name]) != expected:
+        _fail("INVALID_DATA", "Bruker 2rr size disagrees with SI on its two axes.")
+    shape = (counts[1], counts[0])
+    submatrix_shape = (blocks[1], blocks[0])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        _, values = ng.bruker.read_pdata_binary(
+            str(temp.joinpath(*PurePosixPath(name).parts)),
+            shape=shape,
+            submatrix_shape=submatrix_shape,
+            big=bool(endian),
+            isfloat=dtype == 2,
+        )
+    if values.shape != shape:
+        _fail("INVALID_DATA", "Bruker 2rr could not be reordered into its declared submatrices.")
+    with np.errstate(over="ignore", invalid="ignore"):
+        values = np.asarray(values, dtype=np.float64) * (2.0**exponent)
+    declared_experiment = acquisition[0].get("EXP")
+    experiment = declared_experiment if declared_experiment in ("COSY", "HSQC") else None
+    if experiment is not None:
+        _experiment_nuclei(experiment, nuclei)
+    metadata = {
+        "format": "bruker",
+        "reader": "nmrglue.bruker.read_pdata_binary",
+        "reader_version": ng.__version__,
+        "source_name": name,
+        "stage": "processed_spectrum",
+        "experiment": experiment,
+        "experiment_source": "acqus.EXP" if experiment is not None else None,
+        "axis_order": {"x": "F2", "y": "F1", "z": "rows_y_columns_x"},
+        "axis_units": ["ppm", "ppm"],
+        "axes": axis_metadata,
+        "component": "2rr",
+        "data_shape": list(shape),
+        "submatrix_shape": list(submatrix_shape),
+        "submatrix_order": "row-major blocks, row-major values within each block",
+        "BYTORDP": endian,
+        "DTYPP": dtype,
+        "NC_proc": exponent,
+        "scale_applied": "stored_value * 2**procs.NC_proc; once for the complete 2rr component",
+        "reference_convention": "OFFSET - point_index * SW_p / (SI * SF); per processing axis",
+        "fft_applied_on_import": False,
+        "digital_filter": {"applied": False, "method": "not_applicable_processed_input"},
+        "signed_values_preserved": True,
+        "complex_processing_ready": False,
+    }
+    return _grid(name, *axes, values, nuclei, metadata, dependencies)
+
+
+def _processing_numbers(value: list[int] | None) -> list[int] | None:
+    if value is None:
+        return None
+    if (
+        not isinstance(value, list)
+        or not 1 <= len(value) <= MAX_TRACES
+        or any(type(number) is not int or not 1 <= number <= 999999 for number in value)
+        or len(set(value)) != len(value)
+    ):
+        _fail(
+            "INVALID_ARGUMENT",
+            "bruker_processing_numbers must contain 1 to 64 unique integers between 1 and 999999.",
+        )
+    return list(value)
+
+
+def _processing_profile(name: str, context: tuple[str, ...]) -> tuple[str, int] | None:
+    parts = (*context, *PurePosixPath(name).parts)
+    for index in range(len(parts) - 3, -1, -1):
+        number = parts[index + 1]
+        if parts[index] == "pdata" and re.fullmatch(r"[0-9]+", number) and int(number) > 0:
+            return str(PurePosixPath(*parts[len(context) : index + 2])), int(number)
+    return None
+
+
+def _number_label(numbers: list[int]) -> str:
+    label = ", ".join(str(number) for number in numbers) or "none"
+    return label if len(label) <= 180 else label[:180] + "..."
+
+
+def _interpret(
+    files: dict[str, bytes],
+    *,
+    bruker_processing_numbers: list[int] | None = None,
+    processing_context: tuple[str, ...] = (),
+) -> dict:
     result = {"spectra": [], "grids": [], "tables": [], "originals": [], "warnings": []}
     if not files:
         _fail("INVALID_FORMAT", "Input contains no files.")
-    if any(PurePosixPath(name).name in {"ser", "2rr", "3rrr", "4rrrr"} for name in files):
-        _fail(
-            "UNSUPPORTED_FORMAT", "Raw or processed multidimensional Bruker data is not qualified."
-        )
+    profiles_by_file = {name: _processing_profile(name, processing_context) for name in files}
+    profiles = {
+        profile[0]: profile[1] for profile in profiles_by_file.values() if profile is not None
+    }
+    discovered = sorted(set(profiles.values()))
+    discovery = "Discovered Bruker processing numbers: " + _number_label(discovered) + "."
+    # Selection never enables raw multidimensional acquisition, even in an
+    # unselected processing directory.
+    if any(PurePosixPath(name).name == "ser" for name in files):
+        _fail("UNSUPPORTED_FORMAT", "Raw multidimensional Bruker data is not qualified.")
+    components = {"1r", "2rr", "3rrr", "4rrrr"}
+    if bruker_processing_numbers is not None:
+        available = {
+            profile[1]
+            for name, profile in profiles_by_file.items()
+            if profile is not None and PurePosixPath(name).name in components
+        }
+        missing = [number for number in bruker_processing_numbers if number not in available]
+        if missing:
+            _fail(
+                "NOT_FOUND",
+                "No Bruker processed component exists for requested numbers: "
+                + _number_label(missing)
+                + ". "
+                + discovery,
+            )
+        if any(
+            profile is None and PurePosixPath(name).name in components
+            for name, profile in profiles_by_file.items()
+        ):
+            _fail(
+                "INVALID_ARGUMENT",
+                "A Bruker processed component has no explicit pdata/<positive integer> identity; "
+                "capture its conventional directory to apply a processing-number selection. "
+                + discovery,
+            )
     readers = []
     for name in sorted(files):
         leaf = PurePosixPath(name).name
         suffix = PurePosixPath(name).suffix.lower()
+        profile = profiles_by_file[name]
+        if (
+            bruker_processing_numbers is not None
+            and profile is not None
+            and profile[1] not in bruker_processing_numbers
+            and leaf != "fid"
+        ):
+            continue
+        if leaf in {"3rrr", "4rrrr"}:
+            _fail(
+                "UNSUPPORTED_FORMAT",
+                "Processed 3D/4D Bruker data is not qualified. " + discovery,
+            )
         if suffix in _JCAMP_EXT:
             readers.append(("spectrum", name, _jcamp))
         elif suffix in {".csv", ".tsv"}:
@@ -665,27 +1010,80 @@ def _interpret(files: dict[str, bytes]) -> dict:
             readers.append(("bruker", name, _bruker_raw))
         elif leaf == "1r":
             readers.append(("bruker", name, _bruker_processed))
+        elif leaf == "2rr":
+            readers.append(("bruker_grid", name, _bruker_processed_2d))
+        elif suffix == ".json" and _processed_json_candidate(name, files[name], len(files) == 1):
+            readers.append(("grid", name, _processed_json))
     if len(readers) > MAX_TRACES:
-        _fail("INPUT_LIMIT", "Input contains more than 64 supported traces/tables.")
+        _fail("INPUT_LIMIT", "Input contains more than 64 supported traces, grids or tables.")
     if not readers:
-        _fail("UNSUPPORTED_FORMAT", "No qualified JCAMP, CSV or Bruker 1D data was found.")
+        _fail(
+            "UNSUPPORTED_FORMAT",
+            "No qualified JCAMP, CSV, Bruker or processed-2D JSON data was found.",
+        )
     with tempfile.TemporaryDirectory(prefix="nmr-import-") as temp_dir:
         temp = Path(temp_dir)
-        if any(kind == "bruker" for kind, _, _ in readers):
+        if any(kind in {"bruker", "bruker_grid"} for kind, _, _ in readers):
             for name, data in files.items():
                 destination = temp.joinpath(*PurePosixPath(name).parts)
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.write_bytes(data)
         for kind, name, reader in readers:
-            value = reader(name, files, temp) if kind == "bruker" else reader(name, files[name])
+            try:
+                value = (
+                    reader(name, files, temp)
+                    if kind in {"bruker", "bruker_grid"}
+                    else reader(name, files[name])
+                )
+            except NmrError as exc:
+                if kind in {"bruker", "bruker_grid"} and discovered:
+                    raise NmrError(exc.code, f"{exc.message} Source: {name}. {discovery}") from exc
+                raise
             if kind == "table":
                 result["tables"].append(value)
+            elif kind in {"grid", "bruker_grid"}:
+                result["grids"].append(value)
+                if value["metadata"]["experiment"] is None:
+                    result["warnings"].append(
+                        f"Experiment type is unknown for {name}; none was inferred from axes or nuclei."
+                    )
             else:
                 result["spectra"].append(value)
                 if value["nucleus"] is None:
                     result["warnings"].append(
                         f"Nucleus is unknown for {name}; no nucleus was inferred."
                     )
+    if bruker_processing_numbers is not None:
+        decoded = sorted(
+            {
+                profiles_by_file[name][0]
+                for _, name, reader in readers
+                if reader in {_bruker_processed, _bruker_processed_2d}
+            }
+        )
+        skipped = sorted(set(profiles) - set(decoded))
+        selection = {
+            "requested": bruker_processing_numbers,
+            "discovered": discovered,
+            "decoded_profiles": decoded,
+            "skipped_profiles": skipped,
+            "skipped_status": "preserved_not_decoded_or_qualified",
+            "input_directory_context": "/".join(processing_context) or None,
+        }
+        for item in result["spectra"] + result["grids"]:
+            if item["metadata"].get("format") == "bruker":
+                item["metadata"]["bruker_processing_selection"] = dict(selection)
+        result["warnings"].append(
+            "Explicit Bruker processing numbers: "
+            + _number_label(bruker_processing_numbers)
+            + ". "
+            + discovery
+            + " Raw FIDs remain subject to their normal reader checks."
+        )
+        result["warnings"].extend(
+            f"Bruker processing profile {profile}: originals preserved, not decoded or qualified."
+            for profile in skipped
+        )
     result["originals"] = [{"name": name, "data": data} for name, data in sorted(files.items())]
     if result["tables"]:
         result["warnings"].append(
@@ -698,19 +1096,25 @@ def _interpret(files: dict[str, bytes]) -> dict:
     return result
 
 
-def load_input(path: str | Path) -> dict:
+def load_input(path: str | Path, *, bruker_processing_numbers: list[int] | None = None) -> dict:
     """Return validated stage-aware data plus original file and archive bytes.
 
     Errors are bounded NmrError messages, not tracebacks or absolute paths.
     """
     try:
-        source = Path(path).expanduser()
+        selection = _processing_numbers(bruker_processing_numbers)
+        source = Path(path).expanduser().absolute()
         st = source.lstat()
         if _is_link(st):
             _fail("UNSAFE_INPUT", "Input root must not be a symbolic link or reparse point.")
         container = None
+        processing_context = ()
         if stat.S_ISDIR(st.st_mode):
             files = _capture_directory(source)
+            if source.name == "pdata":
+                processing_context = ("pdata",)
+            elif source.parent.name == "pdata" and re.fullmatch(r"[0-9]+", source.name):
+                processing_context = ("pdata", source.name)
         elif stat.S_ISREG(st.st_mode):
             name = _safe_name(source.name)
             data = _read_file(source)
@@ -722,14 +1126,25 @@ def load_input(path: str | Path) -> dict:
                 _check_bundle(files)
         else:
             _fail("UNSAFE_INPUT", "Input must be a regular file or directory.")
-        result = _interpret(files)
+        result = _interpret(
+            files, bruker_processing_numbers=selection, processing_context=processing_context
+        )
         if container:
             for item in result["originals"]:
                 item["name"] = "members/" + item["name"]
-            for spectrum in result["spectra"]:
-                spectrum["metadata"]["source_name"] = (
-                    "members/" + spectrum["metadata"]["source_name"]
-                )
+            for item in result["spectra"] + result["grids"]:
+                item["metadata"]["source_name"] = "members/" + item["metadata"]["source_name"]
+                if "source_names" in item:
+                    item["source_names"] = ["members/" + name for name in item["source_names"]]
+                if "bruker_processing_selection" in item["metadata"]:
+                    selection_metadata = item["metadata"]["bruker_processing_selection"]
+                    item["metadata"]["bruker_processing_selection"] = {
+                        **selection_metadata,
+                        **{
+                            key: ["members/" + name for name in selection_metadata[key]]
+                            for key in ("decoded_profiles", "skipped_profiles")
+                        },
+                    }
             result["originals"].insert(0, container)
         return result
     except NmrError:

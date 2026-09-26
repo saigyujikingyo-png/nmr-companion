@@ -16,7 +16,8 @@ jobs:
         with:
           node-version: "22"
       - run: node --check src/nmr_companion/static/app.js
-      - run: node --test tests/frontend/view.test.cjs
+      - run: node --check src/nmr_companion/static/batch.js
+      - run: node --test tests/frontend/*.test.cjs
       - run: uv run ruff check .
       - run: uv run pytest
       - run: uv build

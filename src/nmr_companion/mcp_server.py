@@ -9,7 +9,7 @@ from .service import Service
 
 
 def make_server(service: Service):
-    server = Server("nmr-companion", version="0.1.0a1")
+    server = Server("nmr-companion", version="0.2.0a1")
 
     @server.list_tools()
     async def list_tools():

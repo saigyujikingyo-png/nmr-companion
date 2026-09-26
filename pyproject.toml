@@ -4,14 +4,19 @@ build-backend = "hatchling.build"
 
 [project]
 name = "nmr-companion"
-version = "0.1.0a1"
+version = "0.2.0a1"
 description = "An editable, local NMR workbench with a shared numerical core for agents."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = "MIT"
 dependencies = [
-  "numpy>=2.2,<3", "scipy>=1.15,<2", "nmrglue==0.12",
-  "pydantic>=2.11,<3", "mcp>=1.20,<2"
+  "numpy>=2.2,<3",
+  "scipy>=1.15,<2",
+  "nmrglue==0.12",
+  "pydantic>=2.11,<3",
+  "mcp>=1.20,<2",
+  "pypdfium2>=5.13,<6",
+  "pillow>=12.3,<13",
 ]
 [project.scripts]
 nmr-companion = "nmr_companion.cli:main"

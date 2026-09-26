@@ -1,5 +1,5 @@
 from __future__ import annotations
-from contextlib import contextmanager
+from contextlib import contextmanager, closing
 import hashlib
 import json
 from pathlib import Path
@@ -8,7 +8,7 @@ from uuid import uuid4
 from .errors import NmrError
 from .models import Artifact, Project, Receipt
 
-SCHEMA = 1
+SCHEMA = 2
 
 
 def canonical_json(value) -> str:
@@ -41,7 +41,7 @@ class Store:
             connection.execute("PRAGMA foreign_keys=ON")
             if not create:
                 version = connection.execute("PRAGMA user_version").fetchone()[0]
-                if version != SCHEMA:
+                if version not in (1, SCHEMA):
                     raise NmrError(
                         "SCHEMA_VERSION", "Unsupported project format; preserve the file."
                     )
@@ -129,36 +129,78 @@ class Store:
                     "Refresh the project before editing.",
                     current_revision=current.revision,
                 )
-            if command["op"] == "undo":
-                target = command["target_revision"]
-                if target >= current.revision:
-                    raise NmrError("INVALID_UNDO", "Undo target must precede the current revision.")
-                project = self.read_from(db, target)
-                ids, warnings = [], ["A prior state was restored as a new revision."]
-            else:
-                project = current.model_copy(deep=True)
-                ids, warnings = callback(project, db)
-            project.revision = current.revision + 1
-            # Validate the complete state before any commit, including callback results.
-            project = Project.model_validate(project.model_dump())
-            payload = project.model_dump_json()
-            if len(payload.encode()) > 128 * 1024 * 1024:
-                raise NmrError("PROJECT_LIMIT", "Snapshot exceeds the alpha 128 MiB limit.")
-            receipt = Receipt(
-                request_id=request_id,
-                operation=command["op"],
-                project_id=project.id,
-                revision=project.revision,
-                object_ids=ids,
-                warnings=warnings,
-            )
-            db.execute("INSERT INTO snapshots VALUES(?,?)", (project.revision, payload))
-            db.execute(
-                "INSERT INTO requests VALUES(?,?,?)",
-                (request_id, fingerprint, receipt.model_dump_json()),
-            )
-            db.commit()
-            return receipt
+            with self._migration_backup(db) as backup:
+                if command["op"] == "undo":
+                    target = command["target_revision"]
+                    if target >= current.revision:
+                        raise NmrError(
+                            "INVALID_UNDO", "Undo target must precede the current revision."
+                        )
+                    project = self.read_from(db, target)
+                    ids, warnings = [], ["A prior state was restored as a new revision."]
+                else:
+                    project = current.model_copy(deep=True)
+                    ids, warnings = callback(project, db)
+                project.schema_version = SCHEMA
+                project.revision = current.revision + 1
+                # Validate the complete state before any commit, including callback results.
+                project = Project.model_validate(project.model_dump())
+                payload = project.model_dump_json()
+                if len(payload.encode()) > 128 * 1024 * 1024:
+                    raise NmrError("PROJECT_LIMIT", "Snapshot exceeds the alpha 128 MiB limit.")
+                if backup is not None:
+                    final_backup = backup.with_suffix("")
+                    backup.rename(final_backup)
+                    warnings = ["Schema 1 rollback backup: " + final_backup.name, *warnings]
+                receipt = Receipt(
+                    request_id=request_id,
+                    operation=command["op"],
+                    project_id=project.id,
+                    revision=project.revision,
+                    object_ids=ids,
+                    warnings=warnings,
+                )
+                db.execute(f"PRAGMA user_version={SCHEMA}")
+                db.execute("INSERT INTO snapshots VALUES(?,?)", (project.revision, payload))
+                db.execute(
+                    "INSERT INTO requests VALUES(?,?,?)",
+                    (request_id, fingerprint, receipt.model_dump_json()),
+                )
+                db.commit()
+                return receipt
+
+    @contextmanager
+    def _migration_backup(self, db):
+        # Create before callbacks can acquire write locks in rollback-journal projects.
+        # Publish the validated backup only when the new state passes validation.
+        backup = self._backup_v1() if db.execute("PRAGMA user_version").fetchone()[0] == 1 else None
+        try:
+            yield backup
+        finally:
+            if backup is not None:
+                backup.unlink(missing_ok=True)  # Only this call's unpublished .partial file.
+
+    def _backup_v1(self):
+        """Called under BEGIN IMMEDIATE: no writer can change the committed source."""
+        backup = self.path.with_name(
+            self.path.name + ".schema1-" + uuid4().hex[:12] + ".backup.partial"
+        )
+        with backup.open("xb"):
+            pass
+        try:
+            # A separate reader sees the committed state, excluding the new mutation.
+            with closing(sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True)) as source:
+                with closing(sqlite3.connect(backup)) as target:
+                    source.backup(target)
+                    target.execute("PRAGMA journal_mode=DELETE")
+                    if target.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                        raise NmrError(
+                            "BACKUP_INTEGRITY", "Project upgrade backup failed validation."
+                        )
+            return backup
+        except Exception:
+            backup.unlink(missing_ok=True)
+            raise
 
     @staticmethod
     def preserve_original(db, data: bytes) -> str:

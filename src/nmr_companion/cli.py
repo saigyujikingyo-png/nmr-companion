@@ -7,7 +7,7 @@ from .errors import NmrError
 
 
 def main():
-    parser = argparse.ArgumentParser(description="NMR Companion local developer alpha")
+    parser = argparse.ArgumentParser(description="NMR Companion local workbench")
     parser.add_argument(
         "--project",
         default=os.environ.get(
@@ -20,6 +20,13 @@ def main():
     create.add_argument("--name", default="NMR project")
     web = sub.add_parser("web", help="Run the workbench explicitly on loopback")
     web.add_argument("--port", type=int, default=0)
+    desktop = sub.add_parser(
+        "desktop", help="Open the local workbench and create a default project only when absent"
+    )
+    desktop.add_argument("--port", type=int, default=0)
+    sub.add_parser(
+        "self-test", help="Verify an isolated temporary project without changing user data"
+    )
     sub.add_parser("mcp", help="Run an MCP stdio frontend until EOF")
     export = sub.add_parser("export", help="Save an immutable revision bundle")
     export.add_argument("--revision", type=int, required=True)
@@ -29,6 +36,18 @@ def main():
     try:
         if args.mode == "create":
             print(service.create(args.name).model_dump_json())
+        elif args.mode == "self-test":
+            from .self_test import run
+
+            print(run())
+        elif args.mode == "desktop":
+            if not service.store.path.exists():
+                service.create("NMR workspace")
+            else:
+                service.read()
+            from .web import run
+
+            run(service, args.port, open_browser=True)
         elif args.mode == "web":
             from .web import run
 

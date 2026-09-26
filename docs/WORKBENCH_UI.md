@@ -89,3 +89,74 @@ editing, graphical structure assignment, image/PDF evidence, condition compariso
 experimental qualification and installed-host delivery remain tracked in
 [acceptance](ACCEPTANCE.md). The existing alpha release is a separate source
 checkpoint; these UI changes do not update that published release automatically.
+
+## First-batch evidence workflows — 2026-09-26 implementation
+
+The batch extension adds labelled controls that submit the same revision-checked
+commands as MCP. The original 1D view, signed T1/T2 fit, undo and export controls
+remain available. At viewport widths of 1120 pixels or less, workflow tabs wrap
+into visible rows and retain their tab roles and keyboard navigation.
+
+| Workflow | Editable controls and shared result |
+| --- | --- |
+| Samples & conditions | Own, reference, synthetic or unknown role; owned spectra/grids/tables; material stage; parent samples and transformation; solvent, temperature in K, named additives and optional concentrations in mol L-1; source reference and notes. |
+| Structure candidates | Atom creation from labelled x/y fields or canvas, selection and movement; stable atom labels/IDs; element, coordinates and stereochemical context; editable bond endpoints, single/double/triple/aromatic order and wedge/hash/either display; candidate alternatives, evidence and explicit review state. |
+| 2D correlations | Processed-grid selection, explicit COSY/HSQC and x/y nucleus confirmation (including 15N), reference provenance, signed heatmap, nearest original-point readout, new crosspeak drafts and existing crosspeak edits. |
+| Reference evidence | Preserve an authorized PDF/PNG/JPEG/WebP original, declare sample/role/category, preview a selected page, draw or numerically edit a rectangle, record an observation and optional approximate ppm reading with separate reading uncertainty. |
+| Organic analysis | Manually positioned signal labels, multiplicity/proton interpretations, same-spectrum relative proton integration, recovered starting material and supplied yield-input standard uncertainties. |
+| Processing | Explicit DEPT-135 / 13C matching prominence, ppm tolerance, phase/sign convention and reference; proposed evidence appears in a table. |
+| Assignments | Link sample, saved candidate, stable atoms and numerical/image observations. A saved atom, crosspeak, signal label or page annotation can open a new assignment draft. Observation and evidence review precede saving. |
+| Compare conditions | Explicit left/right sample and signal/fit correspondence, recorded conditions/reference conventions, right-minus-left difference, right/left ratio where defined, and independently justified uncertainty propagation. |
+
+Drawings and annotations are drafts until their Save button is used. Source
+objects and loaded editor objects are checked by identity and version; a refresh
+that changes them clears the associated draft. An assignment draft also clears
+when its saved object changes. Selecting another project clears the batch drafts.
+The core remains authoritative for scientific validation, stale propagation and
+revision conflicts. A rejected edit is not replayed automatically.
+
+The 2D view has x decreasing from left to right and y increasing from top to
+bottom. Original columns remain x and rows remain y even when either stored axis
+is reversed. Rendering bins retain positive maxima and negative minima separately;
+when both occupy a bin, separate pixel halves show each sign. The labelled display
+cutoff and square-root colour scale change presentation only. Crosspeak intensity
+comes from the nearest original grid point; all numerical analysis continues to
+use the original full-resolution arrays.
+
+Structure coordinates and stereochemical labels are reviewer-editable context.
+The workbench does not perform automatic CIP assignment or confirm a structure
+from a drawing. Existing candidates can be duplicated as proposed alternatives.
+Assignments link saved atom identities; drawing changes must be saved before
+linking the changed drawing to a new assignment.
+
+Reference previews use authenticated requests followed by local Blob URLs; tokens
+are never placed in preview URLs. Page coordinates are normalized from zero to
+one, with a top-left origin and one-based page numbers. Approximate image readings
+remain distinguishable from numerical spectra. The preserved original has a
+separate download action. Download initiation is not proof of receipt or reopening.
+
+The import form includes an optional Bruker processing-number list. Blank means
+strict full-package decoding; an explicit comma-separated list selects processed
+datasets to decode while preserving every original. Invalid, zero, negative or
+duplicate numbers fail locally. The UI never selects a processing number or skips
+a processing directory automatically.
+
+Close workbench sends the authenticated `/api/quit` request and disables further
+edits after the server acknowledges it. Saved project revisions remain in the
+project database. Process exit, restart and installed-host behavior require their
+separate lifecycle evidence.
+
+### Focused frontend evidence
+
+- `node --check src/nmr_companion/static/app.js`: passed.
+- `node --check src/nmr_companion/static/batch.js`: passed.
+- `node --test tests/frontend/*.test.cjs`: 12 passed (7 batch geometry/input checks
+  and 5 existing 1D geometry checks) on Node 24.21.0.
+- Batch checks cover axis orientation, reversed row/column storage, nearest
+  original-point inspection, simultaneous positive/negative display extrema,
+  bounded rectangle geometry, stable atom hit selection and explicit processing
+  selection. They do not establish browser or scientific acceptance.
+
+Live browser, package, installed-host, real instrument and artifact-reopening
+acceptance are recorded separately by the product coordinator. This frontend
+implementation record does not mark the joint 26-use-case batch complete.

@@ -5,8 +5,10 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>NMR Companion · Workbench</title>
     <link rel="stylesheet" href="/app.css" />
+    <link rel="stylesheet" href="/batch.css" />
     <script src="/view.js" defer></script>
     <script src="/app.js" defer></script>
+    <script src="/batch.js" defer></script>
   </head>
   <body>
     <header class="app-header">
@@ -72,6 +74,11 @@
       >
         Assignments
       </button>
+      <button id="tab-samples" data-tab="samples" role="tab" aria-selected="false" aria-controls="samples">Samples & conditions</button>
+      <button id="tab-correlations" data-tab="correlations" role="tab" aria-selected="false" aria-controls="correlations">2D correlations</button>
+      <button id="tab-structures" data-tab="structures" role="tab" aria-selected="false" aria-controls="structures">Structure candidates</button>
+      <button id="tab-references" data-tab="references" role="tab" aria-selected="false" aria-controls="references">Reference evidence</button>
+      <button id="tab-comparison" data-tab="comparison" role="tab" aria-selected="false" aria-controls="comparison">Compare conditions</button>
       <button
         id="tab-advanced"
         data-tab="advanced"
@@ -114,10 +121,14 @@
               id="importPath"
               required
               placeholder="Absolute local path"
-            /><button type="submit">Import &amp; preserve originals</button>
+            />
+            <label for="brukerProcessingNumbers">Bruker processing numbers · optional</label>
+            <input id="brukerProcessingNumbers" placeholder="Blank: decode all; or 1, 2, …" />
+            <p class="hint">Select processed datasets to decode using positive integers separated by commas. All original files remain preserved. Blank retains strict full-package decoding.</p>
+            <button type="submit">Import &amp; preserve originals</button>
           </form>
           <p class="hint">
-            Qualified 1D Bruker, numeric single-block DX, CSV or ZIP. Data stays
+            Qualified Bruker 1D / processed 2D, JCAMP-DX, CSV or ZIP. Data stays
             on this machine.
           </p>
         </details>
@@ -151,6 +162,7 @@
         </div>
       </aside>
       <section class="workspace" aria-label="Spectrum workspace">
+        <section id="batchWorkspace" class="batch-workspace" aria-label="Shared evidence workspace" hidden></section>
         <section class="plot-card">
           <div class="plot-heading">
             <div>
@@ -593,6 +605,11 @@
           </form>
           <div id="assignmentList"></div>
         </section>
+        <section id="samples" class="panel batch-panel" role="tabpanel" aria-labelledby="tab-samples" hidden></section>
+        <section id="correlations" class="panel batch-panel" role="tabpanel" aria-labelledby="tab-correlations" hidden></section>
+        <section id="structures" class="panel batch-panel" role="tabpanel" aria-labelledby="tab-structures" hidden></section>
+        <section id="references" class="panel batch-panel" role="tabpanel" aria-labelledby="tab-references" hidden></section>
+        <section id="comparison" class="panel batch-panel" role="tabpanel" aria-labelledby="tab-comparison" hidden></section>
         <section
           id="advanced"
           class="panel"

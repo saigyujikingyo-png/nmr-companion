@@ -19,3 +19,14 @@ external comparison or interoperability target with its own licence and gates.
 Inter Variable is bundled for offline rendering under the SIL Open Font License 1.1. Copyright 2016 The Inter Project Authors. The full licence is distributed at `src/nmr_companion/static/Inter-LICENSE.txt`.
 Source: https://github.com/rsms/inter/tree/master/docs/font-files
 Font SHA-256: `693b77d4f32ee9b8bfc995589b5fad5e99adf2832738661f5402f9978429a8e3`.
+
+
+## Reference rendering
+Pillow 12.3 uses MIT-CMU; its installed distribution licence is retained.
+[Upstream licence](https://github.com/python-pillow/Pillow/blob/main/LICENSE).
+pypdfium2 5.13 metadata declares BSD-3-Clause, Apache-2.0 and dependency licences.
+[Upstream licensing](https://github.com/pypdfium2-team/pypdfium2#licensing).
+PDFium and third-party notices are retained in the packaged distribution.
+PDFium calls are serialized because the library is not thread-safe.
+The Windows runtime pin and preserved notices are described in docs/INSTALLATION.md.
+Private laboratory inputs are not distributed.
