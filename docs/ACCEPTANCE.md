@@ -16,11 +16,11 @@ every host. Private course references and real input files are not public fixtur
 | Import | Qualified 1D and processed 2D fixtures, original-byte preservation and explicit unsupported/unsafe-input rejection in [test_formats.py](../tests/test_formats.py), [test_processed_2d.py](../tests/test_processed_2d.py) and [test_joint_import.py](../tests/test_joint_import.py). Real-input evidence below has a narrower scope than general instrument support. |
 | Export | Named-revision JSON, CSV, PNG/SVG figures, preserved originals and a reopenable database with prior history. [Review regressions](../tests/test_review_regressions.py) cover stale analysis provenance, reserved source-column collisions and sample roles in fit figures. Archive construction/readback is separate from a host delivering the files. |
 | Protocol and HTTP | A real Windows MCP subprocess exercises discovery, calls, structured failures, resource bytes and EOF. Loopback HTTP tests cover authentication, Host/Origin checks, shared state, reference preview bounds and explicit shutdown: [protocol](../tests/test_protocol.py), [reference HTTP](../tests/test_reference_http.py). This is protocol evidence, not installation in every named host. |
-| Workbench | Labelled forms and editable spectrum, structure, correlation and annotation views are implemented. [Frontend checks](../tests/frontend/) cover geometry, signed display extrema and explicit import selection. Actual browser checkpoints are recorded separately below. |
+| Native workbench | Qt Widgets menus, dockable evidence/results, native dialogs and signed spectrum/grid/structure/reference/fit views replace the browser as the Windows frontend. [Native controller](../tests/test_native_desktop.py), [dialogs](../tests/test_desktop_dialogs.py) and [plots](../tests/test_desktop_plots.py) use isolated offscreen widgets. Physical device interaction remains separate. Historical [web checks](../tests/frontend/) qualify only the retained developer route. |
 | Package lifecycle | [Packaging tests](../tests/test_packaging.py) cover integrity, upgrade, rollback, recovery, launcher locks, preserved user data and guarded removal. Test fixtures and source builds do not establish a fresh installed runtime, clean-device acceptance or a published release. |
 | Native software | The independent core does not require native Mnova. No native Mnova acceptance is inferred here. |
 
-The complete local science, UI and delivery checkpoint completed Ruff, **259
+Before the native frontend change, the local science, web UI and delivery checkpoint completed Ruff, **259
 passing Python tests and 3 platform skips** (82.31 seconds), 12 passing Node tests,
 and wheel/sdist builds. A subsequent packaging-only correction adds the SQLite
 notice to tracked source and rejects ignored or untracked build inputs before
@@ -34,9 +34,16 @@ revision export, original-byte/hash readback, database reopening, non-overwrite
 behavior and structured path errors. Empty-result export provenance is covered by
 [review regressions](../tests/test_review_regressions.py).
 
+An installed alpha.1 candidate passed direct MCP edit/export/resource readback and
+GUI reopen. A subsequent real Codex model safely returned `NO_PROJECT`: its host
+filtered the custom project environment variable. Alpha.2 adds explicit project
+variable forwarding to both adapters. A fresh installed-host workflow is required
+to qualify that correction; the model did not submit any scientific mutation in
+the failed attempt.
+
 These are source and current-device checkpoints. The immutable source cannot
 record tests that occur after its package is built. The versioned
-[0.2.0-alpha.1 release](https://github.com/saigyujikingyo-png/nmr-companion/releases/tag/v0.2.0-alpha.1)
+[0.2.0-alpha.2 release](https://github.com/saigyujikingyo-png/nmr-companion/releases/tag/v0.2.0-alpha.2)
 provides the subsequent `release-evidence.json` for actual package, installation,
 host/model and file-delivery results. Earlier dated evidence remains in the
 [development receipt](DEVELOPMENT_RECEIPT.md) and [workbench record](WORKBENCH_UI.md).
@@ -77,7 +84,7 @@ host/model and file-delivery results. Earlier dated evidence remains in the
 | REL-13 | Persist explicit analysis/quick_check purpose and warn on preliminary fits and comparisons that include them. | [Imported quick-check mapping](../tests/test_joint_import.py), [comparison warning](../tests/test_batch_science.py). | An acquisition-metadata profile for automatic preliminary identification remains unqualified. The default analysis label does not certify acquisition quality. |
 | REL-14 | Export curves, numerical/mapping tables, original files and an editable project from one named revision, with artifact size/hash and source provenance. | [Archive integrity and history](../tests/test_project.py), [CSV/figure provenance regressions](../tests/test_review_regressions.py), [MCP resource bytes](../tests/test_protocol.py); revision-12 ZIP generation and a separate browser download request occurred. | Actual host file receipt, readable figure/table checks and reopening the delivered archive. The current browser download event timed out and no received file was verified. |
 
-## Real input and browser checkpoints
+## Real input and historical browser checkpoints
 
 An authorized private NOMAD 1H Bruker ZIP was imported with an explicit
 `bruker_processing_numbers: [1]` selection. The result contained two objects, a
@@ -93,7 +100,7 @@ roundtrip only. It is not a benchtop DX/CSV pair, quantitative yield validation,
 relaxation acquisition, processed 2D qualification or chemical interpretation.
 Private filenames, accounts, paths and hashes remain outside public source.
 
-The current live in-app browser session used a separate synthetic project. It
+The earlier live in-app browser session used a separate synthetic project. It
 saved samples, a candidate structure, peak labels and a PDF annotation through
 revision 7, then imported a 129-column by 81-row HSQC grid and saved crosspeaks at
 (2, 30) ppm and (7, 60) ppm, with original-point intensities approximately 9.6666
@@ -111,6 +118,32 @@ The in-app browser download event timed out after ten seconds, and no matching
 file was found in the standard Downloads location. Actual browser file delivery
 and reopening of that received file remain unconfirmed. Archive generation is
 not recorded as delivery success.
+
+## Native frontend checkpoint
+
+The user's revised requirement makes the professional native Windows application
+primary. Its Qt Widgets views have no browser, WebView or HTTP listener. Source
+controller tests verify original signed arrays, external revision refresh and
+transitive stale state, revision-conflict refusal, close during exactly one commit,
+presentation failure after a committed write, and named-revision export readback
+without overwriting an existing destination. Multiselection uses the active
+spectrum as its cursor/command target; modal confirmation captures object identity
+and revision. Refresh waits until an editor closes; unavailable fit predictions
+do not remove measured observations from the results table.
+
+The integrated local Windows source suite passed 358 tests with three
+symlink-privilege skips. A subsequent focused startup check covers first-launch
+maximization and restoration of an existing window layout. The 12 retained web
+geometry tests, Ruff and wheel/sdist build passed. Exact-commit CI and installed
+package execution require their own release records.
+
+An isolated offscreen Qt render opened the existing synthetic revision-14
+acceptance project and rendered its HSQC, candidate structure, signed T1 fit and
+PDF annotation. A second project read was unchanged. This exercises saved-object
+binding and rendering; it is not a physical user interaction claim. The built-in
+`desktop-check` additionally checks a synthetic project, native widget layout and
+actual text glyph availability. Package and installed checks must use the new
+native release; historical web screenshots do not qualify it.
 
 ## Independent completion gates
 
@@ -132,7 +165,7 @@ established for the completed batch:
 | ChatGPT Chat | Not established | Not recorded | Not established |
 | ChatGPT local Work | Not established | Not recorded | Not established |
 | ChatGPT cloud Work | Saved environment and integration not established | Not recorded | Not established |
-| Codex | Generic MCP and in-app browser evidence do not establish installed product integration | Product-use model/effort not recorded | Not established |
+| Codex | Alpha.1 plugin installed; fresh alpha.2 workflow required after project-variable forwarding fix | GPT-5.6 Terra/max requested in a real failed `NO_PROJECT` run; resolved model/effort metadata unavailable | Direct installed SDK MCP export/resource readback and archive reopening passed on synthetic revision 14; model-driven delivery still pending |
 | Claude | Not established | Not recorded | Not established |
 | WorkBuddy | Not established | Not recorded | Not established |
 

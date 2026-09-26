@@ -1,5 +1,6 @@
 """Release builder boundaries and real Windows installer behavior in temp roots."""
 import argparse
+import base64
 import ctypes
 import importlib.util
 import io
@@ -214,6 +215,8 @@ def test_installer_upgrade_repeat_rollback_uninstall_preserve_user_data(tmp_path
     assert mcp["command"] == POWERSHELL
     assert mcp["args"] == ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
                            str(root / "Launch.ps1"), "-Mode", "mcp"]
+    assert "env_vars" not in mcp  # The legacy alpha.1 manager requires its original format.
+    assert "env" not in mcp
     catalog = json.loads((adapter_root / ".agents/plugins/marketplace.json").read_text("utf-8"))
     assert catalog["name"] == "nmr-companion-local"
     assert catalog["plugins"][0]["source"]["path"] == "./plugins/nmr-companion"
@@ -228,6 +231,9 @@ def test_installer_upgrade_repeat_rollback_uninstall_preserve_user_data(tmp_path
     assert updated["previous"] == initial["active"]
     assert updated["active"] != initial["active"]
     assert len(updated["releases"]) == 2
+    upgraded_mcp = json.loads((plugin_root / ".mcp.json").read_text("utf-8"))["mcpServers"]["nmr-companion"]
+    assert upgraded_mcp["env_vars"] == ["NMR_COMPANION_PROJECT"]
+    assert "env" not in upgraded_mcp
     assert builder.sha256(root / "Launch.ps1") != launch_hash
     assert (plugin_root / "skills/nmr-workflow/SKILL.md").read_bytes() != original_skill
     manage(root, "Rollback")
@@ -242,6 +248,95 @@ def test_installer_upgrade_repeat_rollback_uninstall_preserve_user_data(tmp_path
     assert '"default_project_removed":  false' in output
     assert list(path.name for path in root.iterdir()) == ["my-notes.txt"]
     assert project.read_bytes() == b"precious independent scientific data"
+
+
+@WINDOWS
+def test_generated_adapter_forwards_selected_host_project_to_runtime(tmp_path):
+    """Exercise the generated command with a filtered host env and real launcher."""
+    bundle = make_bundle(tmp_path / "bundle", version="0.2.0a2")
+    runtime = bundle / "runtime/python.exe"
+    runtime.unlink()
+    compiler = tmp_path / "compile-runtime-probe.ps1"
+    compiler.write_text("""param([string]$Destination)
+$ErrorActionPreference = 'Stop'
+Add-Type -OutputAssembly $Destination -OutputType ConsoleApplication -TypeDefinition @'
+using System;
+using System.Text;
+public class RuntimeProbe {
+    public static int Main(string[] arguments) {
+        string project = Environment.GetEnvironmentVariable("NMR_COMPANION_PROJECT") ?? "<unset>";
+        Console.WriteLine(Convert.ToBase64String(Encoding.UTF8.GetBytes(project)));
+        Console.WriteLine(Environment.GetEnvironmentVariable("NMR_UNLISTED_TEST_VALUE") ?? "<unset>");
+        Console.WriteLine(string.Join("|", arguments));
+        return 0;
+    }
+}
+'@
+""", encoding="utf-8-sig")
+    compiled = subprocess.run(
+        [POWERSHELL, "-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass",
+         "-File", str(compiler), str(runtime)], capture_output=True, timeout=30,
+    )
+    assert compiled.returncode == 0, compiled.stderr
+    builder.create_manifest(bundle, {"version": "0.2.0a2", "platform": "windows-x64"})
+    root = tmp_path / "installed with spaces \u5316\u5b66"
+    manage(root, "Install", bundle=bundle)
+    mcp = json.loads((root / "codex-marketplace/plugins/nmr-companion/.mcp.json").read_text("utf-8"))
+    server = mcp["mcpServers"]["nmr-companion"]
+    project = str(tmp_path / "selected project \u5316\u5b66" / "workspace.nmrproj")
+    # Exercise the real SDK baseline plus the product allowlist. Inheriting the
+    # runner console or stripping Windows profile variables does not model MCP.
+    from mcp.client.stdio import get_default_environment
+    base_environment = get_default_environment()
+    for selected, expected in (({}, "<unset>"), ({"NMR_COMPANION_PROJECT": project}, project)):
+        host_environment = {**selected, "NMR_UNLISTED_TEST_VALUE": "unlisted host value"}
+        forwarded = {key: value for key, value in host_environment.items()
+                     if key in server.get("env_vars", [])}
+        try:
+            result = subprocess.run(
+                [server["command"], *server["args"]], capture_output=True, timeout=60,
+                stdin=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW,
+                env={**base_environment, **forwarded},
+            )
+        except subprocess.TimeoutExpired as error:
+            pytest.fail(f"Adapter probe timed out: stdout={error.stdout!r}; stderr={error.stderr!r}")
+        assert result.returncode == 0, result.stderr
+        lines = result.stdout.decode("ascii").splitlines()
+        assert base64.b64decode(lines[0]).decode("utf-8") == expected
+        assert lines[1] == "<unset>"
+        assert lines[2] == "-I|-B|-m|nmr_companion|mcp"
+
+
+@WINDOWS
+def test_rollback_retains_new_manager_with_legacy_adapter_and_runtime(tmp_path):
+    old = make_bundle(tmp_path / "legacy alpha1", marker="legacy")
+    old_manager = old / "Manage-Installation.ps1"
+    manager_source = old_manager.read_text("utf-8-sig")
+    whitelist_assignment = "        $mcp.mcpServers['nmr-companion']['env_vars'] = @('NMR_COMPANION_PROJECT')\n"
+    assert manager_source.count(whitelist_assignment) == 1
+    # The shipped alpha.1 manager always generates and verifies the original format.
+    old_manager.write_text(manager_source.replace(whitelist_assignment, ""), encoding="utf-8-sig")
+    builder.create_manifest(old, {"version": "0.2.0a1", "platform": "windows-x64"})
+    new = make_bundle(tmp_path / "alpha2", version="0.2.0a2", marker="new")
+    root = tmp_path / "installed"
+    manage(root, "Install", bundle=old)
+    manage(root, "Verify")
+    adapter = root / "codex-marketplace/plugins/nmr-companion/.mcp.json"
+    legacy_adapter = adapter.read_bytes()
+    assert "env_vars" not in json.loads(legacy_adapter)["mcpServers"]["nmr-companion"]
+    initial = state(root)
+    manage(root, "Install", bundle=new)
+    manage(root, "Verify")
+    assert json.loads(adapter.read_bytes())["mcpServers"]["nmr-companion"]["env_vars"] == ["NMR_COMPANION_PROJECT"]
+    manage(root, "Rollback")
+    assert state(root)["active"] == initial["active"]
+    assert adapter.read_bytes() == legacy_adapter
+    assert (root / "Manage-Installation.ps1").read_bytes() == (new / "Manage-Installation.ps1").read_bytes()
+    assert state(root)["manager"]["release"] != state(root)["active"]
+    manage(root, "Verify")  # The retained manager verifies both legacy and current formats.
+    manage(root, "Install", bundle=new)
+    manage(root, "Verify")
+    assert json.loads(adapter.read_bytes())["mcpServers"]["nmr-companion"]["env_vars"] == ["NMR_COMPANION_PROJECT"]
 
 
 @WINDOWS

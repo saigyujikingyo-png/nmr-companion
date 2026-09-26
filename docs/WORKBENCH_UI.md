@@ -1,4 +1,8 @@
-# Spectrum workbench
+# Legacy web spectrum workbench
+
+This is the historical web interface record. Since 0.2.0-alpha.2, the delivered
+Windows frontend is the [native Qt workbench](NATIVE_WORKBENCH.md). These browser
+checks and the earlier Figma design do not qualify or define the native UI.
 
 The workbench presents project data on the left, a spectrum and its computed
 results in the centre, and the active analysis controls on the right. Organic,

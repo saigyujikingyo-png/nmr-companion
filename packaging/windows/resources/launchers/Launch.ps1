@@ -56,6 +56,12 @@ try {
     $runArgs = @('-I', '-B', '-m', 'nmr_companion')
     if ($Project) { $runArgs += @('--project', $Project) }
     $runArgs += $Mode
+    if ($Mode -eq 'desktop') {
+        $env:QT_PLUGIN_PATH = Join-Path $directory 'runtime\Lib\site-packages\PySide6\plugins'
+        $env:QT_QPA_PLATFORM_PLUGIN_PATH = Join-Path $env:QT_PLUGIN_PATH 'platforms'
+        $env:QT_QPA_PLATFORM = 'windows'
+        $env:PYQTGRAPH_QT_LIB = 'PySide6'
+    }
     if ($Mode -eq 'export') {
         if ($Revision -lt 0 -or -not $Output) { throw 'Export requires -Revision and -Output.' }
         $runArgs += @('--revision', [string]$Revision, '--output', $Output)

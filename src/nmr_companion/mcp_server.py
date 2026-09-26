@@ -4,12 +4,13 @@ from mcp import types
 from mcp.server.lowlevel import Server
 from mcp.server.lowlevel.helper_types import ReadResourceContents
 from mcp.server.stdio import stdio_server
+from . import __version__
 from .api import SPECS, dispatch
 from .service import Service
 
 
 def make_server(service: Service):
-    server = Server("nmr-companion", version="0.2.0a1")
+    server = Server("nmr-companion", version=__version__)
 
     @server.list_tools()
     async def list_tools():

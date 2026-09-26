@@ -1,7 +1,7 @@
 # Windows installation and recovery
 
 The Windows x64 prerelease includes Python 3.12, the locked scientific libraries,
-and the NMR Companion workbench/MCP core. Routine use needs no source checkout,
+Qt Widgets and the NMR Companion workbench/MCP core. Routine use needs no source checkout,
 Git, uv, separately installed Python, paid model service or native Mnova.
 Windows 10/11 x64 with Windows PowerShell 5.1 is the package target; actual device
 and host acceptance is recorded separately from a successful package build.
@@ -17,19 +17,22 @@ and host acceptance is recorded separately from a successful package build.
    It does not need administrator privileges. Windows may display its normal
    downloaded-file warning; organization policies may disallow unsigned scripts.
    Do not disable those policies to use this package.
-3. Open `NMR Companion.cmd` in the reported installation folder. The desktop
-   entrypoint opens the workbench and shares the same project as MCP. Its process
-   ends when the **Close workbench** control is used or an explicit stop is requested.
-   Closing only the browser tab leaves the server running until it is stopped. The package
-   manager does not create a background supervisor or start anything at logon.
+3. Open `NMR Companion.exe` in the reported installation folder. This starts a
+   native Qt Widgets window, with no console, browser, WebView or HTTP listener.
+   The workbench shares the same project as MCP. Closing the window waits for an
+   active operation to finish, then ends that desktop process. The package manager
+   does not create a background supervisor or start anything at logon.
 
 The default project is `%USERPROFILE%\NMR Companion\workspace.nmrproj`. The CLI
 creates the desktop default only when absent. Existing projects remain unchanged
 until the user or agent commits an explicit edit. `NMR_COMPANION_PROJECT` can set a
-shared alternative. A launcher `-Project` argument takes precedence. Custom
+shared alternative. Start the host from the environment where this variable is
+set; an already running host cannot see a later environment change. The Codex
+adapter explicitly forwards only this product variable through its `env_vars`
+allowlist. A launcher `-Project` argument takes precedence. Custom
 projects, source data and exports should remain outside the runtime directory.
 
-This preview uses a double-click command entrypoint and console installer. It has
+This preview uses a native `.exe` application entrypoint and a console installer. It has
 no graphical setup wizard, automatic updater, Start Menu registration or file
 association. An installed agent host still needs its supported connection step.
 
@@ -114,8 +117,13 @@ in `installation.json`. Changes to owned files block replacement/removal and are
 preserved for review. Unknown files are retained; a new release refuses to replace
 an unowned file at a newly required path.
 
-Double-click `Rollback.cmd` to switch back to the prior package, including its
-launcher resources. It does not undo scientific edits or migrate databases.
+Double-click `Rollback.cmd` to switch back to the prior numerical runtime and
+version-specific launcher resources. The latest compatible installation manager
+and its native entrypoint are retained, with their source release and hashes in
+installation state, so they can still verify and recover both package formats.
+The native entrypoint refuses a web-only older runtime and explains the required
+upgrade. It never silently opens a browser as the native application. Rollback
+does not undo scientific edits or migrate databases.
 The generated plugin metadata and skills are restored with the runtime version.
 After an upgrade or rollback, reinstall/refresh the named plugin through the
 supported `codex plugin add` or host UI flow and read back its version; host plugin
@@ -127,8 +135,9 @@ unsupported database schema instead of modifying it. Retain earlier ZIP releases
 for recovery if the installation directory itself is lost.
 
 An activation interruption leaves `pending.json` and blocks launch. Run
-`Recover.cmd`; if first installation had not yet created that entrypoint, run
-the extracted package's manager with `-Action Recover -Root INSTALL_ROOT`.
+`Recover.cmd`; if first installation has not yet created that entrypoint, or an upgrade from
+a web-only release stopped before replacing its old manager, run the **new
+extracted package's** manager with `-Action Recover -Root INSTALL_ROOT`.
 Recovery finishes only the recorded, hash-verified package activation. It does
 not rerun a scientific command. A failure before activation can leave an inert
 `.staging-*` directory; preserve it for diagnosis or install into a new empty
@@ -188,7 +197,10 @@ extracts the pinned Astral python-build-standalone runtime, exports `uv.lock`
 without development dependencies, installs hash-locked wheels, and installs the
 fresh product wheel. `--python-archive PATH` reuses a downloaded archive but still
 requires its pinned hash. `--output PATH` selects a fresh build directory; existing
-ZIPs are never overwritten. Runtime and Python package license notices are retained.
+ZIPs are never overwritten. Runtime and Python package license notices are retained. The builder compiles the
+small Windows `.exe` using the system .NET Framework C# compiler, ships dynamic
+Qt/PySide libraries and preserves their upstream licensing/source notices. No
+Qt WebEngine or PySide Addons package is used.
 `runtime/LICENSE.txt` includes redistribution conditions for bundled Microsoft
 runtime components; those conditions also apply to recipients who redistribute
 the package. Dependencies retain their own licenses in the installed metadata.
@@ -198,7 +210,9 @@ their immutable upstream URLs/hashes.
 The isolated `python312._pth` uses relative application-local paths. No venv,
 absolute console-script launchers, pip, uv or development checkout is shipped.
 The build relocates the runtime into a path containing spaces and Unicode, probes
-its installed metadata and runs `python -m nmr_companion self-test`. The manifest
+its installed metadata and runs `python -m nmr_companion self-test` plus an isolated
+`desktop-check` using the relocated Qt platform plugin. Font/glyph and native
+widget rendering checks are distinct from actual user interaction. The manifest
 records source commit/dirty state, source and lock hashes, product wheel hash,
 runtime provenance, dependency versions and every package file's size/hash.
 Source plugin identity/version and all skill files are included as adapter inputs;
@@ -208,7 +222,7 @@ cause the build to fail. Every packaged source input must also be tracked by Git
 ignored or untracked files fail before runtime download or output creation. Dirty
 tracked development builds remain explicitly marked dirty in their manifest.
 `build-evidence.json` and the adjacent `.build.json` report measured import,
-CLI startup (`--help`), self-test and package size. Installed launcher/GUI/MCP, clean-device and host-model
+CLI startup (`--help`), scientific self-test, native render probe and package size. Installed launcher/GUI/MCP, clean-device and host-model
 tests remain separate acceptance work.
 
 The runtime is from the verified upstream

@@ -64,8 +64,11 @@ correspondence; propagated uncertainty requires an independence declaration.
 The Windows bundle supplies its own runtime and stable launcher. GUI and MCP must
 use the same absolute project. Supported plugin installation, tool discovery, real
 model invocation and file delivery are separate checks. Other/cloud hosts need
-their own qualification. Close workbench explicitly; closing only the browser tab
-does not stop the local server.
+their own qualification. The primary frontend is a native Qt Widgets Windows
+application, launched with NMR Companion.exe; it does not use a browser or an HTTP
+listener. Closing its window waits for an active operation, then stops its own
+process. Reconcile uncertain writes before retrying. The optional legacy web
+command remains separate and must be stopped explicitly.
 
 Export a named revision with editable state, originals, CSV/JSON and SVG/PNG figures.
 Check artifact hash and actual delivery. Long nmr_read tables may be truncated

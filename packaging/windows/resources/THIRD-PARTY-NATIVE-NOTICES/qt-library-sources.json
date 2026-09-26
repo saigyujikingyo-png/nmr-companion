@@ -1,0 +1,89 @@
+{
+  "qt_version": "6.11.2",
+  "scope": "Exact Qt DLL names reviewed against the pinned upstream modules in sources.json. Unlisted Qt DLLs block packaging.",
+  "modules": {
+    "qt/qtbase": [
+      "Qt6Concurrent.dll",
+      "Qt6Core.dll",
+      "Qt6DBus.dll",
+      "Qt6Gui.dll",
+      "Qt6Network.dll",
+      "Qt6OpenGL.dll",
+      "Qt6OpenGLWidgets.dll",
+      "Qt6PrintSupport.dll",
+      "Qt6Sql.dll",
+      "Qt6Test.dll",
+      "Qt6Widgets.dll",
+      "Qt6Xml.dll"
+    ],
+    "qt/qtdeclarative": [
+      "Qt6LabsAnimation.dll",
+      "Qt6LabsFolderListModel.dll",
+      "Qt6LabsPlatform.dll",
+      "Qt6LabsQmlModels.dll",
+      "Qt6LabsSettings.dll",
+      "Qt6LabsSharedImage.dll",
+      "Qt6LabsStyleKit.dll",
+      "Qt6LabsStyleKitImpl.dll",
+      "Qt6LabsSynchronizer.dll",
+      "Qt6LabsWavefrontMesh.dll",
+      "Qt6Qml.dll",
+      "Qt6QmlCompiler.dll",
+      "Qt6QmlCore.dll",
+      "Qt6QmlLocalStorage.dll",
+      "Qt6QmlMeta.dll",
+      "Qt6QmlModels.dll",
+      "Qt6QmlNetwork.dll",
+      "Qt6QmlWorkerScript.dll",
+      "Qt6QmlXmlListModel.dll",
+      "Qt6Quick.dll",
+      "Qt6QuickControls2.dll",
+      "Qt6QuickControls2Basic.dll",
+      "Qt6QuickControls2BasicStyleImpl.dll",
+      "Qt6QuickControls2FluentWinUI3StyleImpl.dll",
+      "Qt6QuickControls2Fusion.dll",
+      "Qt6QuickControls2FusionStyleImpl.dll",
+      "Qt6QuickControls2Imagine.dll",
+      "Qt6QuickControls2ImagineStyleImpl.dll",
+      "Qt6QuickControls2Impl.dll",
+      "Qt6QuickControls2Material.dll",
+      "Qt6QuickControls2MaterialStyleImpl.dll",
+      "Qt6QuickControls2Universal.dll",
+      "Qt6QuickControls2UniversalStyleImpl.dll",
+      "Qt6QuickControls2WindowsStyleImpl.dll",
+      "Qt6QuickDialogs2.dll",
+      "Qt6QuickDialogs2QuickImpl.dll",
+      "Qt6QuickDialogs2Utils.dll",
+      "Qt6QuickEffects.dll",
+      "Qt6QuickLayouts.dll",
+      "Qt6QuickParticles.dll",
+      "Qt6QuickShapes.dll",
+      "Qt6QuickShapesDesignHelpers.dll",
+      "Qt6QuickTemplates2.dll",
+      "Qt6QuickTest.dll",
+      "Qt6QuickVectorImage.dll",
+      "Qt6QuickVectorImageGenerator.dll",
+      "Qt6QuickVectorImageHelpers.dll",
+      "Qt6QuickWidgets.dll"
+    ],
+    "qt/qtlottie": [
+      "Qt6Lottie.dll",
+      "Qt6LottieVectorImageGenerator.dll",
+      "Qt6LottieVectorImageHelpers.dll"
+    ],
+    "qt/qtquicktimeline": [
+      "Qt6QuickTimeline.dll",
+      "Qt6QuickTimelineBlendTrees.dll"
+    ],
+    "qt/qtsvg": [
+      "Qt6Svg.dll",
+      "Qt6SvgWidgets.dll"
+    ],
+    "qt/qttools": [
+      "Qt6Designer.dll",
+      "Qt6DesignerComponents.dll",
+      "Qt6Help.dll",
+      "Qt6UiTools.dll"
+    ]
+  }
+}

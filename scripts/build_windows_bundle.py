@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import csv
 from datetime import datetime, timezone
+from email.parser import Parser
 import hashlib
 import json
 import os
@@ -210,6 +211,107 @@ def clean_install_metadata(site: Path) -> None:
             csv.writer(stream).writerows(retained)
 
 
+def compile_native_launcher(source: Path, destination: Path) -> dict:
+    """Use the OS-provided .NET Framework compiler; no user SDK is required."""
+    compiler = Path(os.environ["SystemRoot"]) / "Microsoft.NET/Framework64/v4.0.30319/csc.exe"
+    if not compiler.is_file():
+        raise RuntimeError("Windows .NET Framework 4 C# compiler is unavailable")
+    if destination.exists():
+        raise FileExistsError("Refusing to replace an existing native launcher")
+    run([compiler, "/nologo", "/target:winexe", "/platform:x64", "/optimize+", "/debug-",
+         "/reference:System.Windows.Forms.dll", "/reference:System.Web.Extensions.dll",
+         f"/out:{destination}", source], cwd=destination.parent)
+    return {"kind": "windows-gui", "compiler": ".NET Framework 4 csc",
+            "compiler_sha256": sha256(compiler), "source_sha256": sha256(source),
+            "sha256": sha256(destination), "bytes": destination.stat().st_size}
+
+
+def prune_native_browser_artifacts(site: Path) -> None:
+    """Essentials includes unused browser stubs and a Designer-only browser plugin."""
+    for relative in ("QtWebView.pyi", "QtWebEngineWidgets.pyi", "QtWebEngineQuick.pyi",
+                     "QtWebEngineCore.pyi", "plugins/designer/qwebengineview.dll"):
+        (site / "PySide6" / relative).unlink(missing_ok=True)
+
+
+def qt_library_sources(site: Path, notices: Path) -> list[dict]:
+    """Require a reviewed, pinned source module for every shipped Qt DLL."""
+    catalog = json.loads((notices / "sources.json").read_text("utf-8"))
+    mapping = json.loads((notices / "qt-library-sources.json").read_text("utf-8"))
+    if mapping["qt_version"] != catalog["qt_version"]:
+        raise ValueError("Qt library source mapping version disagrees with pinned notices")
+    sources = {source["repository"]: source for source in catalog["sources"]}
+    libraries = {}
+    for repository, names in mapping["modules"].items():
+        for name in names:
+            key = name.casefold()
+            if key in libraries:
+                raise ValueError(f"Duplicate Qt library source mapping: {name}")
+            libraries[key] = repository
+    inventory = []
+    for path in sorted(site.rglob("*")):
+        if not path.is_file() or not path.name.casefold().startswith("qt6") or path.suffix.lower() != ".dll":
+            continue
+        relative = path.relative_to(site).as_posix()
+        repository = libraries.get(path.name.casefold())
+        if not repository:
+            raise ValueError(f"Missing reviewed Qt source mapping: {relative}")
+        source = sources.get(repository)
+        if (not source or not source.get("files") or
+            not re.fullmatch(r"[0-9a-f]{40}", source.get("commit", "")) or
+            source["commit"] not in source.get("source_archive", "")):
+            raise ValueError(f"Missing pinned Qt source notices: {repository} for {relative}")
+        inventory.append({"path": relative, "repository": repository, "commit": source["commit"]})
+    return inventory
+
+
+def validate_native_payload(site: Path, notices: Path) -> dict:
+    """Fail early on incomplete Qt deployment or stale redistribution notices."""
+    catalog = json.loads((notices / "sources.json").read_text("utf-8"))
+    versions = {}
+    for package in ("pyside6_essentials", "shiboken6", "pyqtgraph"):
+        metadata = list(site.glob(f"{package}-*.dist-info/METADATA"))
+        if len(metadata) != 1:
+            raise ValueError(f"Native dependency metadata missing or ambiguous: {package}")
+        versions[package] = Parser().parsestr(metadata[0].read_text("utf-8"))["Version"]
+        if not list((metadata[0].parent / "licenses").glob("*")):
+            raise ValueError(f"Native dependency license files missing: {package}")
+    if (versions["pyside6_essentials"] != catalog["qt_version"] or
+        versions["shiboken6"] != catalog["qt_version"] or
+        versions["pyqtgraph"] != catalog["pyqtgraph_version"]):
+        raise ValueError("Native dependency versions disagree with pinned source notices")
+    required = ["PySide6/Qt6Core.dll", "PySide6/Qt6Gui.dll", "PySide6/Qt6Widgets.dll",
+                "PySide6/QtCore.pyd", "PySide6/QtGui.pyd", "PySide6/QtWidgets.pyd",
+                "PySide6/plugins/platforms/qwindows.dll", "PySide6/plugins/platforms/qoffscreen.dll",
+                "PySide6/pyside6.abi3.dll", "shiboken6/shiboken6.abi3.dll"]
+    for relative in required:
+        if not (site / relative).is_file():
+            raise ValueError(f"Required native payload is missing: {relative}")
+    if list(site.glob("pyside6_addons-*.dist-info")) or any(
+        "webengine" in path.name.lower() or "webview" in path.name.lower()
+        for path in (site / "PySide6").rglob("*")
+    ):
+        raise ValueError("Native desktop bundle must not include Qt WebEngine, WebView or Addons")
+    source_paths = set()
+    for source in catalog["sources"]:
+        for item in source["files"]:
+            relative = safe_relative(item["file"])
+            if sha256(notices.joinpath(*relative.parts)) != item["sha256"]:
+                raise ValueError("A pinned native dependency notice changed")
+            source_paths.add(item["source_path"])
+    if not {"LICENSES/LGPL-3.0-only.txt", "LICENSES/GPL-3.0-only.txt"} <= source_paths:
+        raise ValueError("The Qt LGPL/GPL redistribution license texts are missing")
+    auxiliary = json.loads((notices / "auxiliary-sources.json").read_text("utf-8"))
+    for item in auxiliary["sources"]:
+        relative = safe_relative(item["file"])
+        if sha256(notices.joinpath(*relative.parts)) != item["sha256"]:
+            raise ValueError("A software OpenGL dependency notice changed")
+    qt_libraries = qt_library_sources(site, notices)
+    return {"versions": versions, "required_platform": "qwindows.dll",
+            "offscreen_platform": "qoffscreen.dll", "source_modules": len(catalog["sources"]),
+            "qt_libraries": qt_libraries,
+            "linkage": "replaceable shared Qt libraries", "webengine": False}
+
+
 def build(args: argparse.Namespace) -> Path:
     if os.name != "nt":
         raise RuntimeError("Build and smoke-test the Windows bundle on Windows x64")
@@ -259,7 +361,9 @@ def build(args: argparse.Namespace) -> Path:
              "--no-deps", "--no-build", "--link-mode", "copy", wheel], cwd=working)
         for path in runtime.rglob("__pycache__"):
             remove_owned_tree(path, runtime)
+        prune_native_browser_artifacts(site)
         clean_install_metadata(site)
+        native_payload = validate_native_payload(site, resources / "resources/THIRD-PARTY-NATIVE-NOTICES")
         metadata_code = (
             "import importlib.metadata as m,json,platform,nmr_companion; "
             "print(json.dumps({'python':platform.python_version(),"
@@ -284,6 +388,9 @@ def build(args: argparse.Namespace) -> Path:
                 shutil.copytree(path, bundle / path.name)
             else:
                 shutil.copy2(path, bundle / path.name)
+        native_launcher = compile_native_launcher(
+            resources / "NativeLauncher.cs", bundle / "launchers/NMR Companion.exe"
+        )
         shutil.copy2(repository / "LICENSE", bundle / "LICENSE")
         shutil.copy2(repository / "docs" / "INSTALLATION.md", bundle / "INSTALLATION.md")
         shutil.copy2(resources / "python-runtime.json", bundle / "python-runtime.json")
@@ -307,10 +414,25 @@ def build(args: argparse.Namespace) -> Path:
         started = time.perf_counter()
         self_test = run([python, "-I", "-B", "-m", "nmr_companion", "self-test"], cwd=output, timeout=60)
         self_test_seconds = round(time.perf_counter() - started, 4)
+        started = time.perf_counter()
+        desktop_check = json.loads(run(
+            [python, "-I", "-B", "-m", "nmr_companion", "desktop-check"], cwd=output,
+            timeout=90, environment={"QT_QPA_PLATFORM": "offscreen", "PYTHONPATH": str(poison),
+                                     "PYTHONHOME": str(poison), "PYQTGRAPH_QT_LIB": "PySide6",
+                                     "QT_PLUGIN_PATH": str(bundle / "runtime/Lib/site-packages/PySide6/plugins")},
+        ))
+        desktop_check_seconds = round(time.perf_counter() - started, 4)
+        if (desktop_check.get("ok") is not True or desktop_check.get("browser") is not False or
+            desktop_check.get("http_listener") is not False or
+            desktop_check.get("frontend") != "native Qt Widgets"):
+            raise ValueError("The relocated native desktop check failed")
         write_json(bundle / "build-evidence.json", {
             "relocation": "passed-space-and-unicode-path", "import_seconds": import_seconds,
             "cli_startup_seconds": cli_startup_seconds,
             "self_test_seconds": self_test_seconds, "self_test": self_test,
+            "desktop_check_seconds": desktop_check_seconds, "desktop_check": desktop_check,
+            "native_launcher": native_launcher,
+            "native_payload": native_payload,
             "installed": installed,
             "scope": "Package process only; installed host/model, GUI and delivery acceptance are separate.",
         })
@@ -320,6 +442,7 @@ def build(args: argparse.Namespace) -> Path:
         source["build_inputs"] = inputs
         create_manifest(bundle, {
             "version": version, "platform": "windows-x64",
+            "desktop_frontend": "qt-widgets",
             "built_at": datetime.now(timezone.utc).isoformat(),
             "source": source, "python_runtime": pin,
             "codex_plugin_version": plugin_version,
@@ -340,6 +463,7 @@ def build(args: argparse.Namespace) -> Path:
         "version": version, "import_seconds": import_seconds,
         "cli_startup_seconds": cli_startup_seconds,
         "self_test_seconds": self_test_seconds,
+        "desktop_check_seconds": desktop_check_seconds,
     })
     return destination
 

@@ -20,10 +20,11 @@ def main():
     create.add_argument("--name", default="NMR project")
     web = sub.add_parser("web", help="Run the workbench explicitly on loopback")
     web.add_argument("--port", type=int, default=0)
-    desktop = sub.add_parser(
-        "desktop", help="Open the local workbench and create a default project only when absent"
+    sub.add_parser(
+        "desktop", help="Open the native Windows workbench and create a project only when absent"
     )
-    desktop.add_argument("--port", type=int, default=0)
+    native_check = sub.add_parser("desktop-check", help="Run an isolated native widget/render probe")
+    native_check.add_argument("--output", help="Optional new PNG path for the synthetic render")
     sub.add_parser(
         "self-test", help="Verify an isolated temporary project without changing user data"
     )
@@ -40,14 +41,18 @@ def main():
             from .self_test import run
 
             print(run())
+        elif args.mode == "desktop-check":
+            from .desktop.app import check
+
+            print(check(args.output))
         elif args.mode == "desktop":
             if not service.store.path.exists():
                 service.create("NMR workspace")
-            else:
-                service.read()
-            from .web import run
+            from .desktop.app import run
 
-            run(service, args.port, open_browser=True)
+            result = run(service)
+            if result:
+                parser.exit(result, "Native workbench exited with an error.\n")
         elif args.mode == "web":
             from .web import run
 
